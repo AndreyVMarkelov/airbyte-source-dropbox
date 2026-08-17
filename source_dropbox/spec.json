@@ -1,0 +1,76 @@
+{
+  "documentationUrl": "https://github.com/AndreyVMarkelov/airbyte-source-dropbox",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Dropbox Source Spec",
+    "type": "object",
+    "required": ["credentials"],
+    "additionalProperties": false,
+    "properties": {
+      "credentials": {
+        "title": "Authentication",
+        "type": "object",
+        "oneOf": [
+          {
+            "title": "OAuth 2.0 with PKCE",
+            "required": ["auth_type", "app_key", "refresh_token"],
+            "additionalProperties": false,
+            "properties": {
+              "auth_type": {
+                "type": "string",
+                "const": "oauth2_pkce",
+                "order": 0
+              },
+              "app_key": {
+                "title": "Dropbox App Key",
+                "type": "string",
+                "airbyte_secret": true,
+                "order": 1
+              },
+              "refresh_token": {
+                "title": "Dropbox Refresh Token",
+                "type": "string",
+                "airbyte_secret": true,
+                "order": 2
+              }
+            }
+          },
+          {
+            "title": "Access Token (development only)",
+            "required": ["auth_type", "access_token"],
+            "additionalProperties": false,
+            "properties": {
+              "auth_type": {
+                "type": "string",
+                "const": "access_token",
+                "order": 0
+              },
+              "access_token": {
+                "title": "Dropbox Access Token",
+                "type": "string",
+                "airbyte_secret": true,
+                "order": 1
+              }
+            }
+          }
+        ]
+      },
+      "path": {
+        "title": "Root Path",
+        "description": "Dropbox folder path to synchronize. Use an empty string for the app root.",
+        "type": "string",
+        "default": ""
+      },
+      "recursive": {
+        "title": "Recursive",
+        "type": "boolean",
+        "default": true
+      },
+      "include_deleted": {
+        "title": "Include Deleted Entries",
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}
