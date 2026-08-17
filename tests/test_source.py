@@ -39,11 +39,92 @@ def test_streams_exposes_entries() -> None:
 
     assert [stream.name for stream in streams] == ["entries"]
     assert streams[0].supports_incremental is True
+    assert "cursor" not in streams[0].get_json_schema()["properties"]
 
 
-def test_entries_reads_from_saved_cursor() -> None:
-    entry = Mock()
-    page = DropboxPage(entries=[entry], cursor="next-cursor", has_more=False)
+def test_entries_checkpoints_only_after_complete_pages() -> None:
+    first_entry = Mock()
+    second_entry = Mock()
+    first_page = DropboxPage(entries=[first_entry], cursor="first-cursor", has_more=True)
+    second_page = DropboxPage(entries=[second_entry], cursor="second-cursor", has_more=False)
+    client = Mock()
+    client.iter_entries.return_value = [first_page, second_page]
+
+    with (
+        patch("source_dropbox.source.DropboxClient", return_value=client),
+        patch(
+            "source_dropbox.streams.entries.normalize_entry",
+            side_effect=[{"entry_key": "file:1"}, {"entry_key": "file:2"}],
+        ),
+    ):
+        stream = SourceDropbox().streams(CONFIG)[0]
+        stream.state = {"cursor": "saved"}
+        configured_stream = Mock(sync_mode=SyncMode.incremental, cursor_field=["cursor"])
+        configured_stream.stream.json_schema = stream.get_json_schema()
+        slice_logger = Mock()
+        slice_logger.should_log_slice_message.return_value = False
+        internal_config = Mock()
+        internal_config.is_limit_reached.return_value = False
+        with patch.object(
+            stream,
+            "_checkpoint_state",
+            side_effect=lambda state, **_: {"checkpoint": state},
+        ):
+            events = list(
+                stream.read(
+                    configured_stream=configured_stream,
+                    logger=Mock(),
+                    slice_logger=slice_logger,
+                    stream_state={"cursor": "saved"},
+                    state_manager=Mock(),
+                    internal_config=internal_config,
+                )
+            )
+
+    assert events == [
+        {"entry_key": "file:1"},
+        {"checkpoint": {"cursor": "first-cursor"}},
+        {"entry_key": "file:2"},
+        {"checkpoint": {"cursor": "second-cursor"}},
+    ]
+    client.iter_entries.assert_called_once_with(
+        path="", recursive=True, include_deleted=True, cursor="saved"
+    )
+
+
+def test_entries_checkpoints_an_empty_page() -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(entries=[], cursor="empty-cursor", has_more=False)
+    ]
+
+    with patch("source_dropbox.source.DropboxClient", return_value=client):
+        stream = SourceDropbox().streams(CONFIG)[0]
+        configured_stream = Mock(sync_mode=SyncMode.full_refresh, cursor_field=["cursor"])
+        configured_stream.stream.json_schema = stream.get_json_schema()
+        slice_logger = Mock()
+        slice_logger.should_log_slice_message.return_value = False
+        internal_config = Mock()
+        internal_config.is_limit_reached.return_value = False
+        with patch.object(stream, "_checkpoint_state", return_value={"checkpoint": "empty-cursor"}):
+            events = list(
+                stream.read(
+                    configured_stream=configured_stream,
+                    logger=Mock(),
+                    slice_logger=slice_logger,
+                    stream_state={},
+                    state_manager=Mock(),
+                    internal_config=internal_config,
+                )
+            )
+
+    assert events == [{"checkpoint": "empty-cursor"}]
+
+
+def test_entries_does_not_advance_state_when_the_cdk_stops_mid_page() -> None:
+    first_entry = Mock()
+    second_entry = Mock()
+    page = DropboxPage(entries=[first_entry, second_entry], cursor="page-cursor", has_more=False)
     client = Mock()
     client.iter_entries.return_value = [page]
 
@@ -51,17 +132,35 @@ def test_entries_reads_from_saved_cursor() -> None:
         patch("source_dropbox.source.DropboxClient", return_value=client),
         patch(
             "source_dropbox.streams.entries.normalize_entry",
-            return_value={"entry_key": "file:1"},
+            side_effect=[{"entry_key": "file:1"}, {"entry_key": "file:2"}],
         ),
     ):
         stream = SourceDropbox().streams(CONFIG)[0]
-        records = list(stream.read_records(SyncMode.incremental, stream_state={"cursor": "saved"}))
+        stream.state = {"cursor": "saved"}
+        configured_stream = Mock(sync_mode=SyncMode.incremental, cursor_field=["cursor"])
+        configured_stream.stream.json_schema = stream.get_json_schema()
+        slice_logger = Mock()
+        slice_logger.should_log_slice_message.return_value = False
+        internal_config = Mock()
+        internal_config.is_limit_reached.return_value = True
+        with patch.object(
+            stream,
+            "_checkpoint_state",
+            side_effect=lambda state, **_: {"checkpoint": state},
+        ):
+            events = list(
+                stream.read(
+                    configured_stream=configured_stream,
+                    logger=Mock(),
+                    slice_logger=slice_logger,
+                    stream_state={"cursor": "saved"},
+                    state_manager=Mock(),
+                    internal_config=internal_config,
+                )
+            )
 
-    assert records == [{"entry_key": "file:1", "cursor": "next-cursor"}]
-    client.iter_entries.assert_called_once_with(
-        path="", recursive=True, include_deleted=True, cursor="saved"
-    )
-    assert stream.get_updated_state({}, records[-1]) == {"cursor": "next-cursor"}
+    assert events == [{"entry_key": "file:1"}, {"checkpoint": {"cursor": "saved"}}]
+    assert stream.state == {"cursor": "saved"}
 
 
 def test_spec_declares_supported_authentication_shapes() -> None:

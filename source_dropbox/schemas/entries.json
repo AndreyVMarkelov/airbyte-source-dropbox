@@ -17,10 +17,6 @@
     "size": {"type": ["null", "integer"]},
     "content_hash": {"type": ["null", "string"]},
     "is_downloadable": {"type": ["null", "boolean"]},
-    "shared_folder_id": {"type": ["null", "string"]},
-    "cursor": {
-      "type": "string",
-      "description": "Opaque Dropbox change cursor used for incremental synchronization."
-    }
+    "shared_folder_id": {"type": ["null", "string"]}
   }
 }
