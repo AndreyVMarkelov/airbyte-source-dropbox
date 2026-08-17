@@ -14,12 +14,13 @@ from airbyte_cdk.models import (
     Type,
 )
 from dropbox.exceptions import ApiError, AuthError, RateLimitError
-from dropbox.sharing import ListSharedLinksError
+from dropbox.sharing import ListFoldersContinueError, ListSharedLinksError
 from jsonschema import Draft7Validator
 
 from source_dropbox.client import (
     DropboxClient,
     DropboxRateLimitError,
+    DropboxSharedFoldersCursorResetError,
     DropboxSharedLinksCursorResetError,
     DropboxSharingPermissionError,
     SharedFoldersPage,
@@ -224,3 +225,31 @@ def test_shared_folder_client_paginates() -> None:
     )
     assert len(list(client.iter_shared_folders())) == 2
     client._client.sharing_list_folders_continue.assert_called_once_with("next")
+
+
+def test_shared_folder_client_restarts_once_after_invalid_cursor() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    invalid_cursor = ApiError("request-id", ListFoldersContinueError.invalid_cursor, None, None)
+    client._client.sharing_list_folders.side_effect = [
+        SimpleNamespace(entries=[_folder()], cursor="next"),
+        SimpleNamespace(entries=[_folder()], cursor=None),
+    ]
+    client._client.sharing_list_folders_continue.side_effect = invalid_cursor
+
+    assert len(list(client.iter_shared_folders())) == 2
+    assert client._client.sharing_list_folders.call_count == 2
+
+
+def test_shared_folder_client_stops_after_a_second_invalid_cursor() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    invalid_cursor = ApiError("request-id", ListFoldersContinueError.invalid_cursor, None, None)
+    client._client.sharing_list_folders.side_effect = [
+        SimpleNamespace(entries=[], cursor="first"),
+        SimpleNamespace(entries=[], cursor="second"),
+    ]
+    client._client.sharing_list_folders_continue.side_effect = invalid_cursor
+
+    with pytest.raises(DropboxSharedFoldersCursorResetError, match="repeatedly"):
+        list(client.iter_shared_folders())

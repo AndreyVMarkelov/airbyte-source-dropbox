@@ -8,6 +8,7 @@ import dropbox
 from dropbox.exceptions import ApiError, AuthError, RateLimitError
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
 from dropbox.sharing import (
+    ListFoldersContinueError,
     ListFoldersResult,
     ListSharedLinksError,
     ListSharedLinksResult,
@@ -54,6 +55,10 @@ class DropboxSharingPermissionError(RuntimeError):
 
 class DropboxSharedLinksCursorResetError(RuntimeError):
     """Raised when Dropbox repeatedly invalidates a shared-links cursor."""
+
+
+class DropboxSharedFoldersCursorResetError(RuntimeError):
+    """Raised when Dropbox repeatedly invalidates a shared-folders cursor."""
 
 
 class DropboxClient:
@@ -186,14 +191,8 @@ class DropboxClient:
 
     def iter_shared_folders(self) -> Iterator[SharedFoldersPage]:
         """List all shared folders available to the authenticated account."""
-        try:
-            result = self._client.sharing_list_folders()
-        except AuthError as exc:
-            raise DropboxSharingPermissionError(
-                "Dropbox app requires sharing.read to sync sharing streams."
-            ) from exc
-        except RateLimitError as exc:
-            raise DropboxRateLimitError("Dropbox rate limited sharing synchronization.") from exc
+        reset_recovered = False
+        result = self._list_shared_folders()
         while True:
             page = self._to_shared_folders_page(result)
             yield page
@@ -209,6 +208,31 @@ class DropboxClient:
                 raise DropboxRateLimitError(
                     "Dropbox rate limited sharing synchronization."
                 ) from exc
+            except ApiError as exc:
+                is_invalid_cursor = isinstance(
+                    exc.error, ListFoldersContinueError
+                ) and exc.error.is_invalid_cursor()
+                if is_invalid_cursor:
+                    if reset_recovered:
+                        raise DropboxSharedFoldersCursorResetError(
+                            "Dropbox repeatedly invalidated the shared-folder pagination cursor."
+                        ) from exc
+                    # A full refresh can restart safely. The shared_folder_id primary key
+                    # lets destinations deduplicate entries replayed from the first page.
+                    result = self._list_shared_folders()
+                    reset_recovered = True
+                else:
+                    raise
+
+    def _list_shared_folders(self) -> ListFoldersResult:
+        try:
+            return self._client.sharing_list_folders()
+        except AuthError as exc:
+            raise DropboxSharingPermissionError(
+                "Dropbox app requires sharing.read to sync sharing streams."
+            ) from exc
+        except RateLimitError as exc:
+            raise DropboxRateLimitError("Dropbox rate limited sharing synchronization.") from exc
 
     @staticmethod
     def _to_page(result: ListFolderResult) -> DropboxPage:
