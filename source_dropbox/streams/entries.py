@@ -15,9 +15,9 @@ class Entries(DropboxStream):
 
     @property
     def cursor_field(self) -> list[str]:
-        # Dropbox's cursor represents a page boundary rather than a field returned in
-        # file metadata. Attach it to each record so the CDK can checkpoint it.
-        return ["cursor"]
+        # Dropbox cursors represent pages, not individual records. State is emitted
+        # explicitly after each complete page in read().
+        return []
 
     @property
     def supports_incremental(self) -> bool:
@@ -30,7 +30,19 @@ class Entries(DropboxStream):
         stream_slice: Mapping[str, Any] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
+        raise NotImplementedError("Entries emits page-level checkpoints through read().")
+
+    def read(
+        self,
+        configured_stream: Any,
+        logger: Any,
+        slice_logger: Any,
+        stream_state: Mapping[str, Any] | None = None,
+        state_manager: Any = None,
+        internal_config: Any = None,
+    ) -> Iterable[Any]:
         state = dict(stream_state or {})
+        sync_mode = configured_stream.sync_mode
         cursor = state.get("cursor") if sync_mode == SyncMode.incremental else None
 
         for page in self.client.iter_entries(
@@ -40,14 +52,10 @@ class Entries(DropboxStream):
             cursor=cursor,
         ):
             for entry in page.entries:
-                record = normalize_entry(entry)
-                record["cursor"] = page.cursor
-                yield record
+                yield normalize_entry(entry)
 
-    def get_updated_state(
-        self,
-        current_stream_state: Mapping[str, Any],
-        latest_record: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
-        cursor = latest_record.get("cursor")
-        return {"cursor": cursor} if cursor else dict(current_stream_state or {})
+            # Dropbox cursors describe the state after an entire page. Emit the
+            # checkpoint only after every record from that page has been yielded.
+            state = {"cursor": page.cursor}
+            if state_manager:
+                yield self._checkpoint_state(state, state_manager)
