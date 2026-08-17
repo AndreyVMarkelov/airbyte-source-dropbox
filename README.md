@@ -6,11 +6,14 @@ Airbyte source connector for Dropbox with incremental sync, metadata ingestion, 
 
 Early development.
 
+## Streams
+
+- `entries` — canonical change stream for files, folders, and deletions from Dropbox `list_folder`; supports incremental sync.
+- `files` — current full-refresh snapshot of Dropbox file metadata.
+- `folders` — current full-refresh snapshot of Dropbox folder metadata.
+
 ## Planned streams
 
-- `entries` — files, folders, and deletions from Dropbox `list_folder`
-- `files` — file metadata snapshot
-- `folders` — folder metadata snapshot
 - `file_contents` — optional extracted text for supported document formats
 
 ## Authentication
