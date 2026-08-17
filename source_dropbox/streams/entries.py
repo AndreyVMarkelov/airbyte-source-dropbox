@@ -37,6 +37,17 @@ class Entries(DropboxStream, CheckpointMixin):
     def state(self, value: MutableMapping[str, Any]) -> None:
         self._state = dict(value or {})
 
+    def _cursor_for_sync(self, sync_mode: SyncMode) -> str | None:
+        """Return a saved cursor only for an incremental change sync.
+
+        A full refresh is always a new snapshot from the configured root. It may
+        emit page checkpoints for Airbyte during that job, but it must never use a
+        prior full-refresh checkpoint as a Dropbox change cursor.
+        """
+        if sync_mode == SyncMode.incremental:
+            return self.state.get("cursor")
+        return None
+
     def stream_slices(
         self,
         *,
@@ -44,7 +55,7 @@ class Entries(DropboxStream, CheckpointMixin):
         cursor_field: list[str] | None = None,
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
-        cursor = self.state.get("cursor") if sync_mode == SyncMode.incremental else None
+        cursor = self._cursor_for_sync(sync_mode)
 
         for page in self.client.iter_entries(
             path=self.config.get("path", ""),

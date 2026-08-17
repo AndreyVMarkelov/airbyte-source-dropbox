@@ -17,9 +17,14 @@ Early development.
 
 The connector is designed to use a Dropbox refresh token with an app key. PKCE authorization tooling will be added before the first release.
 
-## Incremental state
+## State and sync modes
 
-Dropbox `list_folder` cursors are internal connector state; they are not emitted in `entries` records. The connector checkpoints only after a complete Dropbox results page. If Dropbox invalidates a saved cursor, the connector restarts from the configured root. This can replay existing records, so destinations should use the `entry_key` primary key for idempotent upserts/deduplication.
+Dropbox `list_folder` cursors are internal connector state; they are not emitted in `entries` records. The connector checkpoints only after a complete Dropbox results page.
+
+- **Incremental sync** persists and consumes the saved cursor on the next incremental job, so Dropbox returns changes since that cursor.
+- **Full refresh** always starts a new snapshot at the configured root, even if Airbyte supplies a previous state. Full-refresh jobs can emit page checkpoints while running, but those checkpoints are intentionally not used as the baseline for a later full refresh.
+
+If Dropbox invalidates an incremental cursor, the connector restarts from the configured root. This can replay existing records, so destinations should use the `entry_key` primary key for idempotent upserts/deduplication.
 
 ## Development
 
