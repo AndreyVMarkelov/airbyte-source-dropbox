@@ -17,6 +17,10 @@ Early development.
 
 The connector is designed to use a Dropbox refresh token with an app key. PKCE authorization tooling will be added before the first release.
 
+## Incremental state
+
+Dropbox `list_folder` cursors are internal connector state; they are not emitted in `entries` records. The connector checkpoints only after a complete Dropbox results page. If Dropbox invalidates a saved cursor, the connector restarts from the configured root. This can replay existing records, so destinations should use the `entry_key` primary key for idempotent upserts/deduplication.
+
 ## Development
 
 ```bash

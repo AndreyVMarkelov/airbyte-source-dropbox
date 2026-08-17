@@ -66,12 +66,14 @@ def test_list_folder_continue_classifies_cursor_reset() -> None:
         client.list_folder_continue("cursor")
 
 
-def test_iter_entries_restarts_from_root_after_saved_cursor_reset() -> None:
+def test_iter_entries_replays_from_root_after_saved_cursor_reset() -> None:
     client = DropboxClient.__new__(DropboxClient)
-    page = DropboxPage(entries=[], cursor="new-cursor", has_more=False)
+    page = DropboxPage(entries=[Mock()], cursor="new-cursor", has_more=False)
     client.list_folder_continue = Mock(side_effect=DropboxCursorResetError("reset"))
     client.list_folder = Mock(return_value=page)
 
+    # A reset cannot safely resume the old listing. Replaying this page is safe
+    # because entries use entry_key as their destination primary key.
     assert list(
         client.iter_entries(path="/test", recursive=True, include_deleted=True, cursor="old")
     ) == [page]
