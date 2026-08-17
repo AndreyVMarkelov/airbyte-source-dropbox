@@ -11,6 +11,8 @@ Early development.
 - `entries` — canonical change stream for files, folders, and deletions from Dropbox `list_folder`; supports incremental sync.
 - `files` — current full-refresh snapshot of Dropbox file metadata.
 - `folders` — current full-refresh snapshot of Dropbox folder metadata.
+- `shared_links` — current full-refresh inventory of account shared links.
+- `shared_folders` — current full-refresh inventory of shared folders available to the account.
 
 ## Planned streams
 
@@ -19,6 +21,10 @@ Early development.
 ## Authentication
 
 The connector is designed to use a Dropbox refresh token with an app key. PKCE authorization tooling will be added before the first release.
+
+`shared_links` and `shared_folders` require the Dropbox `sharing.read` scope. They are
+full-refresh streams for governance, migration, and RAG ACL enrichment. The core connection
+check and file/folder streams do not require this scope.
 
 ## State and sync modes
 

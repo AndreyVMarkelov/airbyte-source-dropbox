@@ -9,6 +9,8 @@ from source_dropbox.client import DropboxClient
 from source_dropbox.streams.entries import Entries
 from source_dropbox.streams.files import Files
 from source_dropbox.streams.folders import Folders
+from source_dropbox.streams.shared_folders import SharedFolders
+from source_dropbox.streams.shared_links import SharedLinks
 
 
 class SourceDropbox(AbstractSource):
@@ -21,4 +23,10 @@ class SourceDropbox(AbstractSource):
 
     def streams(self, config: dict[str, Any]) -> list[Stream]:
         client = DropboxClient(config)
-        return [Entries(client, config), Files(client, config), Folders(client, config)]
+        return [
+            Entries(client, config),
+            Files(client, config),
+            Folders(client, config),
+            SharedLinks(client, config),
+            SharedFolders(client, config),
+        ]

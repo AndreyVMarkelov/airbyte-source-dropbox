@@ -7,6 +7,12 @@ from typing import Any
 import dropbox
 from dropbox.exceptions import ApiError, AuthError, RateLimitError
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
+from dropbox.sharing import (
+    ListFoldersResult,
+    ListSharedLinksResult,
+    SharedFolderMetadata,
+    SharedLinkMetadata,
+)
 
 
 @dataclass(frozen=True)
@@ -14,6 +20,19 @@ class DropboxPage:
     entries: list[Metadata]
     cursor: str
     has_more: bool
+
+
+@dataclass(frozen=True)
+class SharedLinksPage:
+    links: list[SharedLinkMetadata]
+    cursor: str | None
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class SharedFoldersPage:
+    entries: list[SharedFolderMetadata]
+    cursor: str | None
 
 
 class DropboxAuthenticationError(RuntimeError):
@@ -26,6 +45,10 @@ class DropboxRateLimitError(RuntimeError):
 
 class DropboxCursorResetError(RuntimeError):
     """Raised when Dropbox invalidates a list-folder cursor."""
+
+
+class DropboxSharingPermissionError(RuntimeError):
+    """Raised when the Dropbox app cannot read sharing metadata."""
 
 
 class DropboxClient:
@@ -121,6 +144,54 @@ class DropboxClient:
                 page = self.list_folder(path, recursive, include_deleted)
                 reset_recovered = True
 
+    def iter_shared_links(self) -> Iterator[SharedLinksPage]:
+        """List the authenticated account's shared-link inventory."""
+        cursor: str | None = None
+        while True:
+            try:
+                result = self._client.sharing_list_shared_links(cursor=cursor)
+            except AuthError as exc:
+                raise DropboxSharingPermissionError(
+                    "Dropbox app requires sharing.read to sync sharing streams."
+                ) from exc
+            except RateLimitError as exc:
+                raise DropboxRateLimitError(
+                    "Dropbox rate limited sharing synchronization."
+                ) from exc
+            page = self._to_shared_links_page(result)
+            yield page
+            if not page.has_more:
+                break
+            cursor = page.cursor
+            if cursor is None:
+                raise RuntimeError("Dropbox returned shared-link pagination without a cursor.")
+
+    def iter_shared_folders(self) -> Iterator[SharedFoldersPage]:
+        """List all shared folders available to the authenticated account."""
+        try:
+            result = self._client.sharing_list_folders()
+        except AuthError as exc:
+            raise DropboxSharingPermissionError(
+                "Dropbox app requires sharing.read to sync sharing streams."
+            ) from exc
+        except RateLimitError as exc:
+            raise DropboxRateLimitError("Dropbox rate limited sharing synchronization.") from exc
+        while True:
+            page = self._to_shared_folders_page(result)
+            yield page
+            if page.cursor is None:
+                break
+            try:
+                result = self._client.sharing_list_folders_continue(page.cursor)
+            except AuthError as exc:
+                raise DropboxSharingPermissionError(
+                    "Dropbox app requires sharing.read to sync sharing streams."
+                ) from exc
+            except RateLimitError as exc:
+                raise DropboxRateLimitError(
+                    "Dropbox rate limited sharing synchronization."
+                ) from exc
+
     @staticmethod
     def _to_page(result: ListFolderResult) -> DropboxPage:
         return DropboxPage(
@@ -128,3 +199,13 @@ class DropboxClient:
             cursor=result.cursor,
             has_more=result.has_more,
         )
+
+    @staticmethod
+    def _to_shared_links_page(result: ListSharedLinksResult) -> SharedLinksPage:
+        return SharedLinksPage(
+            links=list(result.links), cursor=result.cursor, has_more=result.has_more
+        )
+
+    @staticmethod
+    def _to_shared_folders_page(result: ListFoldersResult) -> SharedFoldersPage:
+        return SharedFoldersPage(entries=list(result.entries), cursor=result.cursor)

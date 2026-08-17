@@ -96,12 +96,20 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
     with patch("source_dropbox.source.DropboxClient"):
         catalog = SourceDropbox().discover(Mock(), CONFIG)
 
-    assert [stream.name for stream in catalog.streams] == ["entries", "files", "folders"]
+    assert [stream.name for stream in catalog.streams] == [
+        "entries",
+        "files",
+        "folders",
+        "shared_links",
+        "shared_folders",
+    ]
     assert catalog.streams[0].supported_sync_modes == [SyncMode.full_refresh, SyncMode.incremental]
     assert catalog.streams[1].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[2].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[1].source_defined_primary_key == [["id"]]
     assert catalog.streams[2].source_defined_primary_key == [["id"]]
+    assert catalog.streams[3].supported_sync_modes == [SyncMode.full_refresh]
+    assert catalog.streams[4].supported_sync_modes == [SyncMode.full_refresh]
 
 
 def test_files_filters_metadata_pages_and_preserves_optional_metadata() -> None:
