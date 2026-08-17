@@ -9,6 +9,7 @@ from dropbox.exceptions import ApiError, AuthError, RateLimitError
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
 from dropbox.sharing import (
     ListFoldersResult,
+    ListSharedLinksError,
     ListSharedLinksResult,
     SharedFolderMetadata,
     SharedLinkMetadata,
@@ -49,6 +50,10 @@ class DropboxCursorResetError(RuntimeError):
 
 class DropboxSharingPermissionError(RuntimeError):
     """Raised when the Dropbox app cannot read sharing metadata."""
+
+
+class DropboxSharedLinksCursorResetError(RuntimeError):
+    """Raised when Dropbox repeatedly invalidates a shared-links cursor."""
 
 
 class DropboxClient:
@@ -147,6 +152,7 @@ class DropboxClient:
     def iter_shared_links(self) -> Iterator[SharedLinksPage]:
         """List the authenticated account's shared-link inventory."""
         cursor: str | None = None
+        reset_recovered = False
         while True:
             try:
                 result = self._client.sharing_list_shared_links(cursor=cursor)
@@ -158,6 +164,18 @@ class DropboxClient:
                 raise DropboxRateLimitError(
                     "Dropbox rate limited sharing synchronization."
                 ) from exc
+            except ApiError as exc:
+                if isinstance(exc.error, ListSharedLinksError) and exc.error.is_reset():
+                    if reset_recovered:
+                        raise DropboxSharedLinksCursorResetError(
+                            "Dropbox repeatedly invalidated the shared-link pagination cursor."
+                        ) from exc
+                    # A full refresh can safely restart. Previously emitted links may replay,
+                    # and destinations deduplicate them using the URL-based link_key.
+                    cursor = None
+                    reset_recovered = True
+                    continue
+                raise
             page = self._to_shared_links_page(result)
             yield page
             if not page.has_more:

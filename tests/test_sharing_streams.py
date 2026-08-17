@@ -13,12 +13,14 @@ from airbyte_cdk.models import (
     SyncMode,
     Type,
 )
-from dropbox.exceptions import AuthError, RateLimitError
+from dropbox.exceptions import ApiError, AuthError, RateLimitError
+from dropbox.sharing import ListSharedLinksError
 from jsonschema import Draft7Validator
 
 from source_dropbox.client import (
     DropboxClient,
     DropboxRateLimitError,
+    DropboxSharedLinksCursorResetError,
     DropboxSharingPermissionError,
     SharedFoldersPage,
     SharedLinksPage,
@@ -118,13 +120,7 @@ def test_sharing_streams_normalize_paginated_structured_metadata() -> None:
 def test_sharing_streams_allow_absent_optional_metadata() -> None:
     link = _link()
     link.expires = link.team_member_info = link.content_owner_team_info = None
-    link.link_permissions = SimpleNamespace(
-        resolved_visibility=None,
-        allow_download=None,
-        effective_audience=None,
-        requested_visibility=None,
-        link_access_level=None,
-    )
+    link.link_permissions = None
     folder = _folder()
     folder.owner_team = folder.policy = None
     client = Mock()
@@ -136,6 +132,8 @@ def test_sharing_streams_allow_absent_optional_metadata() -> None:
     link_record = list(SharedLinks(client, CONFIG).read_records(SyncMode.full_refresh))[0]
     folder_record = list(SharedFolders(client, CONFIG).read_records(SyncMode.full_refresh))[0]
     assert link_record["expires"] is None
+    assert link_record["visibility"] is None
+    assert link_record["allow_download"] is None
     assert folder_record["policy"] is None
 
 
@@ -184,6 +182,34 @@ def test_shared_link_client_paginates_and_classifies_errors() -> None:
         list(client.iter_shared_links())
     client._client.sharing_list_shared_links.side_effect = RateLimitError("request-id")
     with pytest.raises(DropboxRateLimitError, match="sharing"):
+        list(client.iter_shared_links())
+
+
+def test_shared_link_client_restarts_once_after_cursor_reset() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    reset = ApiError("request-id", ListSharedLinksError.reset, None, None)
+    client._client.sharing_list_shared_links.side_effect = [
+        SimpleNamespace(links=[_link()], cursor="next", has_more=True),
+        reset,
+        SimpleNamespace(links=[_link()], cursor=None, has_more=False),
+    ]
+
+    assert len(list(client.iter_shared_links())) == 2
+    assert client._client.sharing_list_shared_links.call_args_list[2].kwargs == {"cursor": None}
+
+
+def test_shared_link_client_stops_after_a_second_cursor_reset() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    reset = ApiError("request-id", ListSharedLinksError.reset, None, None)
+    client._client.sharing_list_shared_links.side_effect = [
+        SimpleNamespace(links=[], cursor="next", has_more=True),
+        reset,
+        reset,
+    ]
+
+    with pytest.raises(DropboxSharedLinksCursorResetError, match="repeatedly"):
         list(client.iter_shared_links())
 
 
