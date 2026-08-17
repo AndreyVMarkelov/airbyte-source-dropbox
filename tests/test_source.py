@@ -33,11 +33,11 @@ def test_check_connection_failure() -> None:
     assert "bad token" in error
 
 
-def test_streams_exposes_entries() -> None:
+def test_streams_expose_entries_and_snapshots() -> None:
     with patch("source_dropbox.source.DropboxClient"):
         streams = SourceDropbox().streams(CONFIG)
 
-    assert [stream.name for stream in streams] == ["entries"]
+    assert [stream.name for stream in streams] == ["entries", "files", "folders"]
     assert streams[0].supports_incremental is True
     assert "cursor" not in streams[0].get_json_schema()["properties"]
 

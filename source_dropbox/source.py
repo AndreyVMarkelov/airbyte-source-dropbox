@@ -7,6 +7,8 @@ from airbyte_cdk.sources.streams import Stream
 
 from source_dropbox.client import DropboxClient
 from source_dropbox.streams.entries import Entries
+from source_dropbox.streams.files import Files
+from source_dropbox.streams.folders import Folders
 
 
 class SourceDropbox(AbstractSource):
@@ -19,4 +21,4 @@ class SourceDropbox(AbstractSource):
 
     def streams(self, config: dict[str, Any]) -> list[Stream]:
         client = DropboxClient(config)
-        return [Entries(client, config)]
+        return [Entries(client, config), Files(client, config), Folders(client, config)]
