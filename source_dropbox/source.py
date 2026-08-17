@@ -1,0 +1,22 @@
+from __future__ import annotations
+
+from typing import Any
+
+from airbyte_cdk.sources import AbstractSource
+from airbyte_cdk.sources.streams import Stream
+
+from source_dropbox.client import DropboxClient
+from source_dropbox.streams.entries import Entries
+
+
+class SourceDropbox(AbstractSource):
+    def check_connection(self, logger: Any, config: dict[str, Any]) -> tuple[bool, Any]:
+        try:
+            DropboxClient(config).current_account()
+            return True, None
+        except Exception as exc:  # Airbyte expects a user-facing failure message.
+            return False, f"Unable to connect to Dropbox: {exc}"
+
+    def streams(self, config: dict[str, Any]) -> list[Stream]:
+        client = DropboxClient(config)
+        return [Entries(client, config)]
