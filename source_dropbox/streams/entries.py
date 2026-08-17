@@ -73,10 +73,16 @@ class Entries(DropboxStream, CheckpointMixin):
             return
 
         page_cursor = stream_slice["cursor"]
-        for entry in self._pages.pop(page_cursor):
-            yield normalize_entry(entry)
+        entries = self._pages[page_cursor]
+        try:
+            for entry in entries:
+                yield normalize_entry(entry)
 
-        # The CDK observes this state and emits a checkpoint after read_records()
-        # finishes for the slice. A Dropbox cursor therefore never advances until
-        # every record in its page has been yielded.
-        self.state = {"cursor": page_cursor}
+            # The CDK observes this state and emits a checkpoint after
+            # read_records() finishes for the slice. A Dropbox cursor therefore
+            # never advances until every record in its page has been yielded.
+            self.state = {"cursor": page_cursor}
+        finally:
+            # A normalization or downstream read failure must not retain Dropbox
+            # metadata in memory for the lifetime of the stream instance.
+            self._pages.pop(page_cursor, None)
