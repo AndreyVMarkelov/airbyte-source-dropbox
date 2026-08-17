@@ -37,7 +37,13 @@ def test_streams_expose_entries_and_snapshots() -> None:
     with patch("source_dropbox.source.DropboxClient"):
         streams = SourceDropbox().streams(CONFIG)
 
-    assert [stream.name for stream in streams] == ["entries", "files", "folders"]
+    assert [stream.name for stream in streams] == [
+        "entries",
+        "files",
+        "folders",
+        "shared_links",
+        "shared_folders",
+    ]
     assert streams[0].supports_incremental is True
     assert "cursor" not in streams[0].get_json_schema()["properties"]
 
