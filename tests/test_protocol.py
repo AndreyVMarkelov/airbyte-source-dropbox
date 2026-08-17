@@ -111,6 +111,51 @@ def test_full_refresh_protocol_emits_page_state_without_cursor_records() -> None
     )
 
 
+def test_full_refresh_ignores_a_saved_cursor_and_starts_from_root() -> None:
+    page = DropboxPage(entries=[Mock()], cursor="full-page", has_more=False)
+    client = DropboxClient.__new__(DropboxClient)
+    client.list_folder = Mock(return_value=page)
+    client.list_folder_continue = Mock()
+
+    with (
+        patch("source_dropbox.source.DropboxClient", return_value=client),
+        patch(
+            "source_dropbox.streams.entries.normalize_entry",
+            return_value={"entry_key": "file:1"},
+        ),
+    ):
+        messages = list(
+            SourceDropbox().read(
+                logger=Mock(),
+                config=CONFIG,
+                catalog=_catalog(SyncMode.full_refresh),
+                state=_state("saved-page"),
+            )
+        )
+
+    assert _records(messages) == [{"entry_key": "file:1"}]
+    assert _stream_states(messages) == [{"cursor": "full-page"}]
+    client.list_folder.assert_called_once_with("", True, True)
+    client.list_folder_continue.assert_not_called()
+
+
+def test_next_full_refresh_ignores_a_prior_full_refresh_checkpoint() -> None:
+    first_page = DropboxPage(entries=[Mock()], cursor="first-full-page", has_more=False)
+    first_messages, _ = _run_source(
+        [first_page], SyncMode.full_refresh, [{"entry_key": "file:1"}]
+    )
+    prior_state = [message.state for message in first_messages if message.type == Type.STATE]
+    second_page = DropboxPage(entries=[Mock()], cursor="second-full-page", has_more=False)
+
+    _, second_client = _run_source(
+        [second_page], SyncMode.full_refresh, [{"entry_key": "file:2"}], prior_state
+    )
+
+    second_client.iter_entries.assert_called_once_with(
+        path="", recursive=True, include_deleted=True, cursor=None
+    )
+
+
 def test_incremental_protocol_uses_saved_state_and_emits_page_state() -> None:
     page = DropboxPage(entries=[Mock()], cursor="next-page", has_more=False)
 
