@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["file_id", "rev", "content_hash", "name", "size", "content_format", "markdown", "extraction_status"],
+  "properties": {
+    "file_id": {"type": "string"},
+    "rev": {"type": ["null", "string"]},
+    "content_hash": {"type": ["null", "string"]},
+    "name": {"type": "string"},
+    "path_lower": {"type": ["null", "string"]},
+    "path_display": {"type": ["null", "string"]},
+    "size": {"type": "integer"},
+    "content_format": {"type": "string", "const": "markdown"},
+    "markdown": {"type": ["null", "string"]},
+    "extraction_status": {"type": "string", "enum": ["succeeded", "failed", "timed_out"]},
+    "error_type": {"type": ["null", "string"]},
+    "error_code": {"type": ["null", "string"]},
+    "error_details": {
+      "type": ["null", "object"],
+      "additionalProperties": false,
+      "properties": {"type": {"type": "string"}, "message": {"type": "string"}}
+    },
+    "error_message": {"type": ["null", "string"]}
+  }
+}

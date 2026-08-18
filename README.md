@@ -13,6 +13,7 @@ Early development.
 - `folders` — current full-refresh snapshot of Dropbox folder metadata.
 - `shared_links` — current full-refresh inventory of account shared links.
 - `shared_folders` — current full-refresh inventory of shared folders available to the account.
+- `file_contents` — opt-in full-refresh Markdown extraction for configured document extensions.
 
 ## Planned streams
 
@@ -25,6 +26,12 @@ The connector is designed to use a Dropbox refresh token with an app key. PKCE a
 `shared_links` and `shared_folders` require the Dropbox `sharing.read` scope. They are
 full-refresh streams for governance, migration, and RAG ACL enrichment. The core connection
 check and file/folder streams do not require this scope.
+
+`file_contents` requires `files.content.read`. It uses Dropbox Riviera to convert the configured
+connector-supported document extensions to Markdown. Select the stream and configure an explicit
+`file_contents.allowed_extensions` allow-list; an empty allow-list never extracts content. Files
+larger than `file_contents.max_file_size_mb` are skipped. Riviera supports a maximum source size
+of 50 MB. OCR and embedded images are intentionally disabled in this version.
 
 ## State and sync modes
 

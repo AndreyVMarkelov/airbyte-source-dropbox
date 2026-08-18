@@ -102,6 +102,7 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
         "folders",
         "shared_links",
         "shared_folders",
+        "file_contents",
     ]
     assert catalog.streams[0].supported_sync_modes == [SyncMode.full_refresh, SyncMode.incremental]
     assert catalog.streams[1].supported_sync_modes == [SyncMode.full_refresh]
@@ -110,6 +111,8 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
     assert catalog.streams[2].source_defined_primary_key == [["id"]]
     assert catalog.streams[3].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[4].supported_sync_modes == [SyncMode.full_refresh]
+    assert catalog.streams[5].supported_sync_modes == [SyncMode.full_refresh]
+    assert catalog.streams[5].source_defined_primary_key == [["file_id"]]
 
 
 def test_files_filters_metadata_pages_and_preserves_optional_metadata() -> None:

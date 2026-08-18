@@ -43,6 +43,7 @@ def test_streams_expose_entries_and_snapshots() -> None:
         "folders",
         "shared_links",
         "shared_folders",
+        "file_contents",
     ]
     assert streams[0].supports_incremental is True
     assert "cursor" not in streams[0].get_json_schema()["properties"]
