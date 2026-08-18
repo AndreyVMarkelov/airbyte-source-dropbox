@@ -227,6 +227,19 @@ def test_extract_markdown_classifies_content_scope_error() -> None:
         client.extract_markdown("id:file", 10)
 
 
+def test_extract_markdown_classifies_plaintext_content_scope_error() -> None:
+    clock = Mock()
+    client, sdk = _riviera_client(clock, Mock())
+    sdk.riviera_get_markdown_async.side_effect = BadInputError(
+        "request-id",
+        "Your app is not permitted to access this endpoint because it does not have "
+        "the required scope 'files.content.read'.",
+    )
+
+    with pytest.raises(DropboxContentPermissionError, match="files.content.read"):
+        client.extract_markdown("id:file", 10)
+
+
 def test_extract_markdown_classifies_refresh_token_failure_during_sync() -> None:
     clock = Mock()
     client, sdk = _riviera_client(clock, Mock())

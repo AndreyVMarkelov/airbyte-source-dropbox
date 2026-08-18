@@ -186,6 +186,14 @@ def test_shared_link_client_paginates_and_classifies_errors() -> None:
         list(client.iter_shared_links())
 
     client._client.sharing_list_shared_links.side_effect = BadInputError(
+        "request-id",
+        "Your app is not permitted to access this endpoint because it does not have "
+        "the required scope 'sharing.read'.",
+    )
+    with pytest.raises(DropboxSharingPermissionError, match="sharing.read"):
+        list(client.iter_shared_links())
+
+    client._client.sharing_list_shared_links.side_effect = BadInputError(
         "request-id", '{"error":"invalid_grant"}'
     )
     with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
