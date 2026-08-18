@@ -7,6 +7,7 @@ from airbyte_cdk.sources.streams import Stream
 
 from source_dropbox.client import DropboxClient
 from source_dropbox.streams.entries import Entries
+from source_dropbox.streams.file_contents import FileContents
 from source_dropbox.streams.files import Files
 from source_dropbox.streams.folders import Folders
 from source_dropbox.streams.shared_folders import SharedFolders
@@ -29,4 +30,5 @@ class SourceDropbox(AbstractSource):
             Folders(client, config),
             SharedLinks(client, config),
             SharedFolders(client, config),
+            FileContents(client, config),
         ]
