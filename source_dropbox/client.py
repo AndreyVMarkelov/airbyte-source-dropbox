@@ -116,10 +116,8 @@ class DropboxClient:
     def current_account(self) -> Any:
         try:
             return self._client.users_get_current_account()
-        except AuthError as exc:
-            raise DropboxAuthenticationError(self._authentication_message(exc)) from exc
-        except BadInputError as exc:
-            raise DropboxAuthenticationError(self._token_exchange_message(exc)) from exc
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited the connection check.") from exc
 
@@ -130,8 +128,8 @@ class DropboxClient:
                 recursive=recursive,
                 include_deleted=include_deleted,
             )
-        except AuthError as exc:
-            raise DropboxAuthenticationError(self._authentication_message(exc)) from exc
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited folder synchronization.") from exc
         return self._to_page(result)
@@ -139,8 +137,8 @@ class DropboxClient:
     def list_folder_continue(self, cursor: str) -> DropboxPage:
         try:
             result = self._client.files_list_folder_continue(cursor)
-        except AuthError as exc:
-            raise DropboxAuthenticationError(self._authentication_message(exc)) from exc
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
         except ApiError as exc:
             if isinstance(exc.error, ListFolderContinueError) and exc.error.is_reset():
                 raise DropboxCursorResetError(
@@ -191,8 +189,8 @@ class DropboxClient:
         while True:
             try:
                 result = self._client.sharing_list_shared_links(cursor=cursor)
-            except AuthError as exc:
-                self._raise_sharing_auth_error(exc)
+            except (AuthError, BadInputError) as exc:
+                self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
             except RateLimitError as exc:
                 raise DropboxRateLimitError(
                     "Dropbox rate limited sharing synchronization."
@@ -228,8 +226,8 @@ class DropboxClient:
                 break
             try:
                 result = self._client.sharing_list_folders_continue(page.cursor)
-            except AuthError as exc:
-                self._raise_sharing_auth_error(exc)
+            except (AuthError, BadInputError) as exc:
+                self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
             except RateLimitError as exc:
                 raise DropboxRateLimitError(
                     "Dropbox rate limited sharing synchronization."
@@ -253,8 +251,8 @@ class DropboxClient:
     def _list_shared_folders(self) -> ListFoldersResult:
         try:
             return self._client.sharing_list_folders()
-        except AuthError as exc:
-            self._raise_sharing_auth_error(exc)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited sharing synchronization.") from exc
 
@@ -266,8 +264,8 @@ class DropboxClient:
                 enable_ocr=False,
                 embed_images=False,
             )
-        except AuthError as exc:
-            self._raise_content_auth_error(exc)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc, required_scope="files.content.read")
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited content extraction.") from exc
         except ApiError as exc:
@@ -331,8 +329,8 @@ class DropboxClient:
     def _check_markdown_job(self, job_id: str) -> GetMarkdownAsyncCheckResult:
         try:
             return self._client.riviera_get_markdown_async_check(job_id)
-        except AuthError as exc:
-            self._raise_content_auth_error(exc)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc, required_scope="files.content.read")
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited content extraction.") from exc
         except ApiError as exc:
@@ -414,20 +412,30 @@ class DropboxClient:
         return "Dropbox could not refresh the access token. Check the app key and refresh token."
 
     @classmethod
-    def _raise_sharing_auth_error(cls, exc: AuthError) -> None:
-        if getattr(exc.error, "_tag", None) == "missing_scope":
-            raise DropboxSharingPermissionError(
-                "Dropbox app requires sharing.read to sync sharing streams."
-            ) from exc
-        raise DropboxAuthenticationError(cls._authentication_message(exc)) from exc
+    def _raise_auth_or_refresh_error(
+        cls, exc: AuthError | BadInputError, *, required_scope: str | None = None
+    ) -> None:
+        """Raise user-actionable credential errors at every Dropbox SDK boundary.
 
-    @classmethod
-    def _raise_content_auth_error(cls, exc: AuthError) -> None:
-        if getattr(exc.error, "_tag", None) == "missing_scope":
-            raise DropboxContentPermissionError(
-                "Dropbox app requires files.content.read to sync file_contents."
-            ) from exc
-        raise DropboxAuthenticationError(cls._authentication_message(exc)) from exc
+        Missing optional scopes are intentionally local to the stream that needs them.
+        Refresh failures, including ones raised after connection checking, are always
+        reported as connection credential failures rather than raw SDK exceptions.
+        """
+        if isinstance(exc, AuthError) and getattr(exc.error, "_tag", None) == "missing_scope":
+            if required_scope == "sharing.read":
+                raise DropboxSharingPermissionError(
+                    "Dropbox app requires sharing.read to sync sharing streams."
+                ) from exc
+            if required_scope == "files.content.read":
+                raise DropboxContentPermissionError(
+                    "Dropbox app requires files.content.read to sync file_contents."
+                ) from exc
+        message = (
+            cls._authentication_message(exc)
+            if isinstance(exc, AuthError)
+            else cls._token_exchange_message(exc)
+        )
+        raise DropboxAuthenticationError(message) from exc
 
     @staticmethod
     def _to_page(result: ListFolderResult) -> DropboxPage:
