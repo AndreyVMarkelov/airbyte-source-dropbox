@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 from unittest.mock import Mock
@@ -31,6 +32,24 @@ from source_dropbox.source import SourceDropbox
 pytestmark = pytest.mark.integration
 
 
+class _DiagnosticLogger:
+    """Capture stream exceptions that Airbyte intentionally sanitizes in messages."""
+
+    def __init__(self, secrets: Iterable[str]) -> None:
+        self._secrets = tuple(secret for secret in secrets if secret)
+        self.exceptions: list[str] = []
+
+    def exception(self, message: str, *args: object, **kwargs: object) -> None:
+        _, error, _ = sys.exc_info()
+        detail = f"{message}: {type(error).__name__}: {error}" if error else message
+        for secret in self._secrets:
+            detail = detail.replace(secret, "[REDACTED]")
+        self.exceptions.append(detail)
+
+    def __getattr__(self, name: str) -> object:
+        return lambda *args, **kwargs: None
+
+
 def _catalog(
     config: dict[str, object], names: list[str], sync_mode: SyncMode = SyncMode.full_refresh
 ) -> ConfiguredAirbyteCatalog:
@@ -58,9 +77,11 @@ def _read(
     state: list[AirbyteStateMessage] | None = None,
 ) -> list[object]:
     messages: list[object] = []
+    credentials = config.get("credentials", {})
+    logger = _DiagnosticLogger(str(value) for value in credentials.values())
     try:
         for message in SourceDropbox().read(
-            logger=Mock(), config=config, catalog=catalog, state=state
+            logger=logger, config=config, catalog=catalog, state=state
         ):
             messages.append(message)
     except AirbyteTracedException as exc:
@@ -69,7 +90,7 @@ def _read(
             for message in messages
             if message.type == Type.TRACE and message.trace and message.trace.error  # type: ignore[union-attr]
         ]
-        detail = "; ".join(trace_errors) or str(exc)
+        detail = "; ".join(logger.exceptions) or "; ".join(trace_errors) or str(exc)
         pytest.fail(f"Airbyte protocol read failed: {detail}")
     return messages
 
