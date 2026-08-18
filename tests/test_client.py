@@ -1,7 +1,8 @@
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
-from dropbox.exceptions import ApiError, AuthError, RateLimitError
+from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
 from dropbox.files import ListFolderContinueError
 
 from source_dropbox.client import (
@@ -34,6 +35,33 @@ def test_current_account_classifies_authentication_errors() -> None:
     client._client.users_get_current_account.side_effect = AuthError("request-id", None)
 
     with pytest.raises(DropboxAuthenticationError, match="rejected"):
+        client.current_account()
+
+
+@pytest.mark.parametrize(
+    ("message", "expected"),
+    [
+        ('{"error":"invalid_client"}', "app key"),
+        ('{"error":"invalid_grant"}', "invalid or revoked"),
+    ],
+)
+def test_current_account_classifies_refresh_token_exchange_errors(message, expected) -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    client._client.users_get_current_account.side_effect = BadInputError("request-id", message)
+
+    with pytest.raises(DropboxAuthenticationError, match=expected):
+        client.current_account()
+
+
+def test_current_account_classifies_revoked_access_token() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    client._client.users_get_current_account.side_effect = AuthError(
+        "request-id", SimpleNamespace(_tag="invalid_access_token")
+    )
+
+    with pytest.raises(DropboxAuthenticationError, match="invalid, expired, or revoked"):
         client.current_account()
 
 

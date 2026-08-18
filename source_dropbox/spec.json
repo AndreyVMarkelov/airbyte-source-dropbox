@@ -8,11 +8,12 @@
     "additionalProperties": false,
     "properties": {
       "credentials": {
-        "title": "Authentication",
+        "title": "Dropbox authentication",
+        "description": "Recommended: create refresh-token credentials with `python -m source_dropbox.oauth authorize --app-key <APP_KEY>`, then paste the generated JSON fields here.",
         "type": "object",
         "oneOf": [
           {
-            "title": "OAuth 2.0 with PKCE",
+            "title": "OAuth 2.0 refresh token (recommended)",
             "required": ["auth_type", "app_key", "refresh_token"],
             "additionalProperties": false,
             "properties": {
@@ -23,20 +24,23 @@
               },
               "app_key": {
                 "title": "Dropbox App Key",
+                "description": "The App key shown in your Dropbox App Console. This identifies the app; it is not a client secret.",
                 "type": "string",
-                "airbyte_secret": true,
+                "examples": ["abc123def456"],
                 "order": 1
               },
               "refresh_token": {
                 "title": "Dropbox Refresh Token",
+                "description": "Long-lived token generated with the PKCE helper. It is used to obtain short-lived Dropbox access tokens automatically.",
                 "type": "string",
                 "airbyte_secret": true,
+                "examples": ["slr.example-refresh-token"],
                 "order": 2
               }
             }
           },
           {
-            "title": "Access Token (development only)",
+            "title": "Access token (development/manual testing only)",
             "required": ["auth_type", "access_token"],
             "additionalProperties": false,
             "properties": {
@@ -47,8 +51,10 @@
               },
               "access_token": {
                 "title": "Dropbox Access Token",
+                "description": "A manually generated Dropbox access token. Use refresh-token authentication for production connections.",
                 "type": "string",
                 "airbyte_secret": true,
+                "examples": ["sl.example-access-token"],
                 "order": 1
               }
             }
@@ -57,34 +63,39 @@
       },
       "path": {
         "title": "Root Path",
-        "description": "Dropbox folder path to synchronize. Use an empty string for the app root.",
+        "description": "Dropbox folder path to synchronize. Use an empty string to synchronize from the app root.",
         "type": "string",
-        "default": ""
+        "default": "",
+        "examples": ["", "/Projects"]
       },
       "recursive": {
-        "title": "Recursive",
+        "title": "Include subfolders",
+        "description": "When enabled, synchronize the configured folder and all of its descendants.",
         "type": "boolean",
         "default": true
       },
       "include_deleted": {
         "title": "Include Deleted Entries",
+        "description": "Include deletions in the incremental entries change stream. Snapshot streams always omit deleted Dropbox metadata.",
         "type": "boolean",
         "default": true
       },
       "file_contents": {
         "title": "File Content Extraction",
-        "description": "Optional settings for the file_contents stream. Extraction is disabled until allowed_extensions is configured and the stream is selected.",
+        "description": "Optional settings for the file_contents stream. Extraction is disabled until the stream is selected and allowed_extensions is configured. Requires the files.content.read Dropbox scope.",
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "allowed_extensions": {
             "title": "Allowed Extensions",
+            "description": "Explicit lowercase extension allow-list, for example .pdf or .docx. An empty list disables extraction.",
             "type": "array",
             "items": {"type": "string"},
             "default": []
           },
           "max_file_size_mb": {
             "title": "Maximum File Size (MB)",
+            "description": "Do not extract files larger than this size.",
             "type": "integer",
             "minimum": 1,
             "maximum": 50,
@@ -92,6 +103,7 @@
           },
           "timeout_seconds": {
             "title": "Extraction Timeout (seconds)",
+            "description": "Maximum time to wait for Dropbox Riviera conversion of one file.",
             "type": "integer",
             "minimum": 10,
             "maximum": 600,
