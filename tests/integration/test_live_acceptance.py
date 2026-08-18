@@ -95,7 +95,7 @@ def test_live_spec_check_and_discover(core_config: dict[str, object]) -> None:
 
 
 def test_live_core_full_refresh_and_schema_validation(
-    core_config: dict[str, object], environment_keys: set[str]
+    core_config: dict[str, object], integration_secrets: set[str]
 ) -> None:
     messages = _read(core_config, _catalog(core_config, ["files", "folders"]))
     records = _records(messages)
@@ -103,11 +103,11 @@ def test_live_core_full_refresh_and_schema_validation(
     for record in records:
         stream_name = "files" if "content_hash" in record else "folders"
         Draft7Validator(_schema(stream_name)).validate(record)
-    _assert_no_secret_leak(messages, environment_keys)
+    _assert_no_secret_leak(messages, integration_secrets)
 
 
 def test_live_entries_incremental_resume(
-    core_config: dict[str, object], environment_keys: set[str]
+    core_config: dict[str, object], integration_secrets: set[str]
 ) -> None:
     catalog = _catalog(core_config, ["entries"], SyncMode.incremental)
     initial_messages = _read(core_config, catalog)
@@ -115,7 +115,8 @@ def test_live_entries_incremental_resume(
 
     assert state, "Initial incremental sync must emit Dropbox cursor state."
     resumed_messages = _read(core_config, catalog, state)
-    _assert_no_secret_leak([*initial_messages, *resumed_messages], environment_keys)
+    assert _states(resumed_messages), "Resumed incremental sync must emit valid cursor state."
+    _assert_no_secret_leak([*initial_messages, *resumed_messages], integration_secrets)
 
 
 def test_live_optional_scopes_remain_local(

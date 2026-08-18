@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -77,6 +76,11 @@ def content_config(integration_environment: dict[str, str]) -> dict[str, Any]:
 
 
 @pytest.fixture(scope="session")
-def environment_keys(integration_environment: dict[str, str]) -> Iterator[set[str]]:
-    """Allow tests to assert logs/messages do not contain any configured secrets."""
-    yield set(integration_environment.values())
+def integration_secrets(integration_environment: dict[str, str]) -> set[str]:
+    """Credential values only; fixture paths are expected in Dropbox records."""
+    return {
+        integration_environment["DROPBOX_INTEGRATION_APP_KEY"],
+        integration_environment["DROPBOX_INTEGRATION_REFRESH_TOKEN_CORE"],
+        integration_environment["DROPBOX_INTEGRATION_REFRESH_TOKEN_SHARING"],
+        integration_environment["DROPBOX_INTEGRATION_REFRESH_TOKEN_CONTENT"],
+    }
