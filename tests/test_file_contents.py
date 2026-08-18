@@ -14,11 +14,12 @@ from airbyte_cdk.models import (
     Type,
 )
 from dropbox import async_, riviera
-from dropbox.exceptions import ApiError, AuthError, RateLimitError
+from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
 from dropbox.files import FileMetadata, FolderMetadata
 from jsonschema import Draft7Validator
 
 from source_dropbox.client import (
+    DropboxAuthenticationError,
     DropboxClient,
     DropboxContentPermissionError,
     DropboxExtractionInfrastructureError,
@@ -224,6 +225,27 @@ def test_extract_markdown_classifies_content_scope_error() -> None:
     )
     with pytest.raises(DropboxContentPermissionError, match="files.content.read"):
         client.extract_markdown("id:file", 10)
+
+
+def test_extract_markdown_classifies_refresh_token_failure_during_sync() -> None:
+    clock = Mock()
+    client, sdk = _riviera_client(clock, Mock())
+    sdk.riviera_get_markdown_async.side_effect = BadInputError(
+        "request-id", '{"error":"invalid_grant"}'
+    )
+
+    with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
+        client.extract_markdown("id:file", 10)
+
+
+def test_markdown_poll_classifies_refresh_token_failure_during_sync() -> None:
+    client, sdk = _riviera_client(Mock(), Mock())
+    sdk.riviera_get_markdown_async_check.side_effect = BadInputError(
+        "request-id", '{"error":"invalid_grant"}'
+    )
+
+    with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
+        client._check_markdown_job("job")
 
 
 def test_extract_markdown_rate_limit_fails_stream() -> None:

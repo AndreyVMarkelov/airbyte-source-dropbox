@@ -83,6 +83,28 @@ def test_list_folder_classifies_authentication_errors() -> None:
         client.list_folder("", recursive=True, include_deleted=True)
 
 
+def test_list_folder_classifies_refresh_token_failure_during_sync() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    client._client.files_list_folder.side_effect = BadInputError(
+        "request-id", '{"error":"invalid_grant"}'
+    )
+
+    with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
+        client.list_folder("", recursive=True, include_deleted=True)
+
+
+def test_list_folder_continue_classifies_refresh_token_failure_during_sync() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    client._client.files_list_folder_continue.side_effect = BadInputError(
+        "request-id", '{"error":"invalid_grant"}'
+    )
+
+    with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
+        client.list_folder_continue("cursor")
+
+
 def test_list_folder_continue_classifies_cursor_reset() -> None:
     client = DropboxClient.__new__(DropboxClient)
     client._client = Mock()

@@ -13,11 +13,12 @@ from airbyte_cdk.models import (
     SyncMode,
     Type,
 )
-from dropbox.exceptions import ApiError, AuthError, RateLimitError
+from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
 from dropbox.sharing import ListFoldersContinueError, ListSharedLinksError
 from jsonschema import Draft7Validator
 
 from source_dropbox.client import (
+    DropboxAuthenticationError,
     DropboxClient,
     DropboxRateLimitError,
     DropboxSharedFoldersCursorResetError,
@@ -183,6 +184,12 @@ def test_shared_link_client_paginates_and_classifies_errors() -> None:
     )
     with pytest.raises(DropboxSharingPermissionError, match="sharing.read"):
         list(client.iter_shared_links())
+
+    client._client.sharing_list_shared_links.side_effect = BadInputError(
+        "request-id", '{"error":"invalid_grant"}'
+    )
+    with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
+        list(client.iter_shared_links())
     client._client.sharing_list_shared_links.side_effect = RateLimitError("request-id")
     with pytest.raises(DropboxRateLimitError, match="sharing"):
         list(client.iter_shared_links())
@@ -227,6 +234,17 @@ def test_shared_folder_client_paginates() -> None:
     )
     assert len(list(client.iter_shared_folders())) == 2
     client._client.sharing_list_folders_continue.assert_called_once_with("next")
+
+
+def test_shared_folder_client_classifies_refresh_token_failure_during_sync() -> None:
+    client = DropboxClient.__new__(DropboxClient)
+    client._client = Mock()
+    client._client.sharing_list_folders.side_effect = BadInputError(
+        "request-id", '{"error":"invalid_grant"}'
+    )
+
+    with pytest.raises(DropboxAuthenticationError, match="invalid or revoked"):
+        list(client.iter_shared_folders())
 
 
 def test_shared_folder_client_restarts_once_after_invalid_cursor() -> None:

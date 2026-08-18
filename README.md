@@ -2,6 +2,8 @@
 
 Airbyte source connector for Dropbox with incremental sync, metadata ingestion, and optional document extraction.
 
+Current connector version: **0.1.0**. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
 ## Status
 
 Early development.
@@ -56,6 +58,14 @@ Dropbox `list_folder` cursors are internal connector state; they are not emitted
 - **Full refresh** always starts a new snapshot at the configured root, even if Airbyte supplies a previous state. Full-refresh jobs can emit page checkpoints while running, but those checkpoints are intentionally not used as the baseline for a later full refresh.
 
 If Dropbox invalidates an incremental cursor, the connector restarts from the configured root. This can replay existing records, so destinations should use the `entry_key` primary key for idempotent upserts/deduplication.
+
+## Compatibility and support policy
+
+- Python: 3.12.
+- Airbyte CDK: `6.61.6`. This is the exact CDK version against which the connector's protocol and checkpoint behavior is tested.
+- Dropbox Python SDK: `>=12.0.2,<13.0.0`.
+
+The connector does not log credentials, refresh tokens, authorization codes, or extracted document content. Use scoped Dropbox apps and grant optional permissions only for the streams you select.
 
 ## Development
 
