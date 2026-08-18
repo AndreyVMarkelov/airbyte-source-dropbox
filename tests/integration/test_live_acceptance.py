@@ -16,6 +16,8 @@ from airbyte_cdk.models import (
     SyncMode,
     Type,
 )
+from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from dropbox.exceptions import ApiError
 from dropbox.files import FileMetadata
 from jsonschema import Draft7Validator
 
@@ -55,7 +57,21 @@ def _read(
     catalog: ConfiguredAirbyteCatalog,
     state: list[AirbyteStateMessage] | None = None,
 ) -> list[object]:
-    return list(SourceDropbox().read(logger=Mock(), config=config, catalog=catalog, state=state))
+    messages: list[object] = []
+    try:
+        for message in SourceDropbox().read(
+            logger=Mock(), config=config, catalog=catalog, state=state
+        ):
+            messages.append(message)
+    except AirbyteTracedException as exc:
+        trace_errors = [
+            message.trace.error.message
+            for message in messages
+            if message.type == Type.TRACE and message.trace and message.trace.error  # type: ignore[union-attr]
+        ]
+        detail = "; ".join(trace_errors) or str(exc)
+        pytest.fail(f"Airbyte protocol read failed: {detail}")
+    return messages
 
 
 def _records(messages: Iterable[object]) -> list[dict[str, object]]:
@@ -74,6 +90,22 @@ def _schema(stream_name: str) -> dict[str, object]:
 def _assert_no_secret_leak(messages: Iterable[object], secrets: set[str]) -> None:
     rendered = "\n".join(str(message) for message in messages)
     assert not any(secret in rendered for secret in secrets)
+
+
+@pytest.fixture(scope="session")
+def integration_test_path(core_config: dict[str, object]) -> str:
+    """Verify the read fixture before protocol tests mask its Dropbox error."""
+    path = str(core_config["path"])
+    try:
+        DropboxClient(core_config).list_folder(path, recursive=True, include_deleted=False)
+    except ApiError as exc:
+        pytest.fail(
+            f"Dropbox integration test path {path!r} is unavailable. "
+            "Create it in the linked Dropbox account or set "
+            "DROPBOX_INTEGRATION_TEST_PATH to an accessible folder. "
+            f"Dropbox returned: {exc.error!s}"
+        )
+    return path
 
 
 def test_live_spec_check_and_discover(core_config: dict[str, object]) -> None:
@@ -95,7 +127,7 @@ def test_live_spec_check_and_discover(core_config: dict[str, object]) -> None:
 
 
 def test_live_core_full_refresh_and_schema_validation(
-    core_config: dict[str, object], integration_secrets: set[str]
+    core_config: dict[str, object], integration_secrets: set[str], integration_test_path: str
 ) -> None:
     messages = _read(core_config, _catalog(core_config, ["files", "folders"]))
     records = _records(messages)
@@ -107,7 +139,7 @@ def test_live_core_full_refresh_and_schema_validation(
 
 
 def test_live_entries_incremental_resume(
-    core_config: dict[str, object], integration_secrets: set[str]
+    core_config: dict[str, object], integration_secrets: set[str], integration_test_path: str
 ) -> None:
     catalog = _catalog(core_config, ["entries"], SyncMode.incremental)
     initial_messages = _read(core_config, catalog)
@@ -120,7 +152,7 @@ def test_live_entries_incremental_resume(
 
 
 def test_live_optional_scopes_remain_local(
-    core_config: dict[str, object]
+    core_config: dict[str, object], integration_test_path: str
 ) -> None:
     client = DropboxClient(core_config)
     with pytest.raises(DropboxSharingPermissionError, match="sharing.read"):
@@ -149,7 +181,7 @@ def test_live_sharing_streams(sharing_config: dict[str, object]) -> None:
         Draft7Validator(_schema(stream_name)).validate(record)
 
 
-def test_live_file_contents(content_config: dict[str, object]) -> None:
+def test_live_file_contents(content_config: dict[str, object], integration_test_path: str) -> None:
     messages = _read(content_config, _catalog(content_config, ["file_contents"]))
     records = _records(messages)
     assert records, (
