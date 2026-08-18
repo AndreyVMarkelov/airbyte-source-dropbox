@@ -219,7 +219,9 @@ def test_extract_markdown_classifies_file_and_system_failures() -> None:
 def test_extract_markdown_classifies_content_scope_error() -> None:
     clock = Mock()
     client, sdk = _riviera_client(clock, Mock())
-    sdk.riviera_get_markdown_async.side_effect = AuthError("request-id", None)
+    sdk.riviera_get_markdown_async.side_effect = AuthError(
+        "request-id", SimpleNamespace(_tag="missing_scope")
+    )
     with pytest.raises(DropboxContentPermissionError, match="files.content.read"):
         client.extract_markdown("id:file", 10)
 

@@ -180,3 +180,15 @@ def test_spec_declares_supported_authentication_shapes() -> None:
         "oauth2_pkce",
         "access_token",
     }
+    oauth = next(
+        item
+        for item in credentials["oneOf"]
+        if item["properties"]["auth_type"]["const"] == "oauth2_pkce"
+    )
+    access_token = next(
+        item
+        for item in credentials["oneOf"]
+        if item["properties"]["auth_type"]["const"] == "access_token"
+    )
+    assert oauth["properties"]["refresh_token"]["airbyte_secret"] is True
+    assert access_token["properties"]["access_token"]["airbyte_secret"] is True

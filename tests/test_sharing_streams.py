@@ -178,7 +178,9 @@ def test_shared_link_client_paginates_and_classifies_errors() -> None:
     assert len(list(client.iter_shared_links())) == 2
     assert client._client.sharing_list_shared_links.call_args_list[1].kwargs == {"cursor": "next"}
 
-    client._client.sharing_list_shared_links.side_effect = AuthError("request-id", None)
+    client._client.sharing_list_shared_links.side_effect = AuthError(
+        "request-id", SimpleNamespace(_tag="missing_scope")
+    )
     with pytest.raises(DropboxSharingPermissionError, match="sharing.read"):
         list(client.iter_shared_links())
     client._client.sharing_list_shared_links.side_effect = RateLimitError("request-id")

@@ -6,7 +6,7 @@ from time import monotonic, sleep
 from typing import Any
 
 import dropbox
-from dropbox.exceptions import ApiError, AuthError, RateLimitError
+from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
 from dropbox.riviera import FileIdOrUrl, GetMarkdownAsyncCheckResult
 from dropbox.sharing import (
@@ -50,7 +50,7 @@ class MarkdownExtraction:
 
 
 class DropboxAuthenticationError(RuntimeError):
-    """Raised when the Dropbox credentials are invalid or revoked."""
+    """Raised when the base Dropbox credentials are invalid, revoked, or insufficient."""
 
 
 class DropboxRateLimitError(RuntimeError):
@@ -117,7 +117,9 @@ class DropboxClient:
         try:
             return self._client.users_get_current_account()
         except AuthError as exc:
-            raise DropboxAuthenticationError("Dropbox rejected the supplied credentials.") from exc
+            raise DropboxAuthenticationError(self._authentication_message(exc)) from exc
+        except BadInputError as exc:
+            raise DropboxAuthenticationError(self._token_exchange_message(exc)) from exc
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited the connection check.") from exc
 
@@ -129,7 +131,7 @@ class DropboxClient:
                 include_deleted=include_deleted,
             )
         except AuthError as exc:
-            raise DropboxAuthenticationError("Dropbox rejected the supplied credentials.") from exc
+            raise DropboxAuthenticationError(self._authentication_message(exc)) from exc
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited folder synchronization.") from exc
         return self._to_page(result)
@@ -138,7 +140,7 @@ class DropboxClient:
         try:
             result = self._client.files_list_folder_continue(cursor)
         except AuthError as exc:
-            raise DropboxAuthenticationError("Dropbox rejected the supplied credentials.") from exc
+            raise DropboxAuthenticationError(self._authentication_message(exc)) from exc
         except ApiError as exc:
             if isinstance(exc.error, ListFolderContinueError) and exc.error.is_reset():
                 raise DropboxCursorResetError(
@@ -190,9 +192,7 @@ class DropboxClient:
             try:
                 result = self._client.sharing_list_shared_links(cursor=cursor)
             except AuthError as exc:
-                raise DropboxSharingPermissionError(
-                    "Dropbox app requires sharing.read to sync sharing streams."
-                ) from exc
+                self._raise_sharing_auth_error(exc)
             except RateLimitError as exc:
                 raise DropboxRateLimitError(
                     "Dropbox rate limited sharing synchronization."
@@ -229,9 +229,7 @@ class DropboxClient:
             try:
                 result = self._client.sharing_list_folders_continue(page.cursor)
             except AuthError as exc:
-                raise DropboxSharingPermissionError(
-                    "Dropbox app requires sharing.read to sync sharing streams."
-                ) from exc
+                self._raise_sharing_auth_error(exc)
             except RateLimitError as exc:
                 raise DropboxRateLimitError(
                     "Dropbox rate limited sharing synchronization."
@@ -256,9 +254,7 @@ class DropboxClient:
         try:
             return self._client.sharing_list_folders()
         except AuthError as exc:
-            raise DropboxSharingPermissionError(
-                "Dropbox app requires sharing.read to sync sharing streams."
-            ) from exc
+            self._raise_sharing_auth_error(exc)
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited sharing synchronization.") from exc
 
@@ -271,9 +267,7 @@ class DropboxClient:
                 embed_images=False,
             )
         except AuthError as exc:
-            raise DropboxContentPermissionError(
-                "Dropbox app requires files.content.read to sync file_contents."
-            ) from exc
+            self._raise_content_auth_error(exc)
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited content extraction.") from exc
         except ApiError as exc:
@@ -338,9 +332,7 @@ class DropboxClient:
         try:
             return self._client.riviera_get_markdown_async_check(job_id)
         except AuthError as exc:
-            raise DropboxContentPermissionError(
-                "Dropbox app requires files.content.read to sync file_contents."
-            ) from exc
+            self._raise_content_auth_error(exc)
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited content extraction.") from exc
         except ApiError as exc:
@@ -393,6 +385,49 @@ class DropboxClient:
         raise DropboxExtractionInfrastructureError(
             "Riviera returned an unexpected extraction error."
         )
+
+    @staticmethod
+    def _authentication_message(exc: AuthError) -> str:
+        tag = getattr(exc.error, "_tag", None)
+        if tag == "missing_scope":
+            return (
+                "Dropbox credentials are valid but missing a required base scope "
+                "(account_info.read or files.metadata.read)."
+            )
+        if tag in {"invalid_access_token", "expired_access_token"}:
+            return (
+                "Dropbox refresh token or access token is invalid, expired, or revoked. "
+                "Re-authorize the app."
+            )
+        return "Dropbox rejected the supplied credentials. Check the app key and refresh token."
+
+    @staticmethod
+    def _token_exchange_message(exc: BadInputError) -> str:
+        message = exc.message.lower()
+        if "invalid_client" in message:
+            return "Dropbox rejected the app key. Check the configured Dropbox app key."
+        if "invalid_grant" in message:
+            return (
+                "Dropbox rejected the refresh token. It may be invalid or revoked; "
+                "re-authorize the app."
+            )
+        return "Dropbox could not refresh the access token. Check the app key and refresh token."
+
+    @classmethod
+    def _raise_sharing_auth_error(cls, exc: AuthError) -> None:
+        if getattr(exc.error, "_tag", None) == "missing_scope":
+            raise DropboxSharingPermissionError(
+                "Dropbox app requires sharing.read to sync sharing streams."
+            ) from exc
+        raise DropboxAuthenticationError(cls._authentication_message(exc)) from exc
+
+    @classmethod
+    def _raise_content_auth_error(cls, exc: AuthError) -> None:
+        if getattr(exc.error, "_tag", None) == "missing_scope":
+            raise DropboxContentPermissionError(
+                "Dropbox app requires files.content.read to sync file_contents."
+            ) from exc
+        raise DropboxAuthenticationError(cls._authentication_message(exc)) from exc
 
     @staticmethod
     def _to_page(result: ListFolderResult) -> DropboxPage:

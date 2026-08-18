@@ -15,13 +15,28 @@ Early development.
 - `shared_folders` — current full-refresh inventory of shared folders available to the account.
 - `file_contents` — opt-in full-refresh Markdown extraction for configured document extensions.
 
-## Planned streams
-
-- `file_contents` — optional extracted text for supported document formats
-
 ## Authentication
 
-The connector is designed to use a Dropbox refresh token with an app key. PKCE authorization tooling will be added before the first release.
+### Recommended: PKCE refresh token
+
+1. Create a scoped Dropbox app in the [Dropbox App Console](https://www.dropbox.com/developers/apps). Choose **Full Dropbox** access if the connector must read existing account content.
+2. In the app's **Permissions** tab, enable the scopes for the streams you plan to use:
+   - Core streams (`entries`, `files`, `folders`): `account_info.read`, `files.metadata.read`.
+   - `shared_links`, `shared_folders`: `sharing.read`.
+   - `file_contents`: `files.content.read`.
+3. Run the helper locally (it uses PKCE and never asks for a client secret):
+
+   ```bash
+   python -m source_dropbox.oauth authorize --app-key <APP_KEY>
+   ```
+
+   It prints an authorization URL. Approve it in Dropbox, copy the displayed code back into the helper, then paste the generated credentials JSON into the Airbyte UI. The default preset requests every connector scope. To request less, use `--scope-preset core` or `--scope-preset core+sharing`.
+
+The connector deliberately keeps optional scopes local: connection testing verifies only base credentials. A missing `sharing.read` or `files.content.read` scope produces a clear error only if the corresponding stream is selected.
+
+### Development/manual testing: access token
+
+For short-lived local testing, generate an access token in the Dropbox App Console and choose **Access token (development/manual testing only)** in the Airbyte UI. Do not use this mode for production connections; use the PKCE refresh-token flow instead.
 
 `shared_links` and `shared_folders` require the Dropbox `sharing.read` scope. They are
 full-refresh streams for governance, migration, and RAG ACL enrichment. The core connection
