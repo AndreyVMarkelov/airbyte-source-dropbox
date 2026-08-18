@@ -291,7 +291,12 @@ class DropboxClient:
         job_id = launch.get_async_job_id()
         while True:
             if self._monotonic_clock() >= deadline:
-                return MarkdownExtraction(markdown=None, extraction_status="timed_out")
+                return MarkdownExtraction(
+                    markdown=None,
+                    extraction_status="timed_out",
+                    error_type="timeout",
+                    error_message=f"Riviera extraction exceeded {timeout_seconds} seconds.",
+                )
             result = self._check_markdown_job(job_id)
             if not isinstance(result, GetMarkdownAsyncCheckResult):
                 raise DropboxExtractionInfrastructureError(
@@ -320,7 +325,12 @@ class DropboxClient:
 
             remaining = deadline - self._monotonic_clock()
             if remaining <= 0:
-                return MarkdownExtraction(markdown=None, extraction_status="timed_out")
+                return MarkdownExtraction(
+                    markdown=None,
+                    extraction_status="timed_out",
+                    error_type="timeout",
+                    error_message=f"Riviera extraction exceeded {timeout_seconds} seconds.",
+                )
             self._sleeper(min(delay, remaining))
             delay = min(delay * 2, 10.0)
 

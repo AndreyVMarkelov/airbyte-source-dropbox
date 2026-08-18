@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -13,7 +14,7 @@ from airbyte_cdk.models import (
     Type,
 )
 from dropbox import async_, riviera
-from dropbox.exceptions import AuthError
+from dropbox.exceptions import ApiError, AuthError, RateLimitError
 from dropbox.files import FileMetadata, FolderMetadata
 from jsonschema import Draft7Validator
 
@@ -22,6 +23,7 @@ from source_dropbox.client import (
     DropboxContentPermissionError,
     DropboxExtractionInfrastructureError,
     DropboxPage,
+    DropboxRateLimitError,
     MarkdownExtraction,
 )
 from source_dropbox.source import SourceDropbox
@@ -185,7 +187,10 @@ def test_extract_markdown_timeout_does_not_overshoot_deadline() -> None:
         riviera.GetMarkdownAsyncCheckResult.in_progress
     )
 
-    assert client.extract_markdown("id:file", 10).extraction_status == "timed_out"
+    extraction = client.extract_markdown("id:file", 10)
+    assert extraction.extraction_status == "timed_out"
+    assert extraction.error_type == "timeout"
+    assert extraction.error_message == "Riviera extraction exceeded 10 seconds."
     assert [call.args[0] for call in sleeper.call_args_list] == [1.0, 0.5]
 
 
@@ -216,4 +221,46 @@ def test_extract_markdown_classifies_content_scope_error() -> None:
     client, sdk = _riviera_client(clock, Mock())
     sdk.riviera_get_markdown_async.side_effect = AuthError("request-id", None)
     with pytest.raises(DropboxContentPermissionError, match="files.content.read"):
+        client.extract_markdown("id:file", 10)
+
+
+def test_extract_markdown_rate_limit_fails_stream() -> None:
+    client, sdk = _riviera_client(Mock(), Mock())
+    sdk.riviera_get_markdown_async.side_effect = RateLimitError("request-id")
+    with pytest.raises(DropboxRateLimitError, match="content extraction"):
+        client.extract_markdown("id:file", 10)
+
+
+@pytest.mark.parametrize(
+    "malformed_launch",
+    [object(), SimpleNamespace(is_async_job_id=lambda: False)],
+)
+def test_extract_markdown_rejects_malformed_launch(malformed_launch: object) -> None:
+    client, sdk = _riviera_client(Mock(), Mock())
+    sdk.riviera_get_markdown_async.return_value = malformed_launch
+    with pytest.raises(DropboxExtractionInfrastructureError, match="invalid extraction launch"):
+        client.extract_markdown("id:file", 10)
+
+
+def test_extract_markdown_rejects_malformed_check_response() -> None:
+    client, sdk = _riviera_client(Mock(return_value=0), Mock())
+    sdk.riviera_get_markdown_async_check.return_value = object()
+    with pytest.raises(DropboxExtractionInfrastructureError, match="invalid extraction status"):
+        client.extract_markdown("id:file", 10)
+
+
+def test_extract_markdown_maps_other_status_to_failed_record() -> None:
+    client, sdk = _riviera_client(Mock(return_value=0), Mock())
+    sdk.riviera_get_markdown_async_check.return_value = riviera.GetMarkdownAsyncCheckResult("other")
+    extraction = client.extract_markdown("id:file", 10)
+    assert extraction.extraction_status == "failed"
+    assert extraction.error_type == "unknown_status"
+
+
+def test_extract_markdown_unexpected_api_error_fails_stream() -> None:
+    client, sdk = _riviera_client(Mock(return_value=0), Mock())
+    sdk.riviera_get_markdown_async_check.side_effect = ApiError(
+        "request-id", Mock(), None, None
+    )
+    with pytest.raises(DropboxExtractionInfrastructureError, match="could not check"):
         client.extract_markdown("id:file", 10)
