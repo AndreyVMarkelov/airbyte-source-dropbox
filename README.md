@@ -96,6 +96,34 @@ docker run --rm -v "$PWD/secrets:/secrets:ro" airbyte/source-dropbox:dev \
   check --config /secrets/config.json
 ```
 
+### Live Dropbox integration tests
+
+The default test suite uses deterministic mocks and never calls Dropbox. The opt-in live suite
+validates the Airbyte protocol against a dedicated Dropbox test app and account; it does not write
+to Dropbox. Create `/airbyte-integration-test` (or another isolated test path) with at least one
+small `.pdf` or `.docx` file before running it.
+
+```bash
+export DROPBOX_INTEGRATION_APP_KEY="..."
+export DROPBOX_INTEGRATION_REFRESH_TOKEN_CORE="..."
+export DROPBOX_INTEGRATION_REFRESH_TOKEN_SHARING="..."
+export DROPBOX_INTEGRATION_REFRESH_TOKEN_CONTENT="..."
+export DROPBOX_INTEGRATION_TEST_PATH="/airbyte-integration-test"
+# Optional: intentionally invalid/revoked token for negative coverage.
+export DROPBOX_INTEGRATION_INVALID_REFRESH_TOKEN="..."
+# Optional: a fixture path large enough for Dropbox to return multiple pages.
+export DROPBOX_INTEGRATION_PAGINATION_PATH="/airbyte-integration-pagination"
+
+pytest --run-integration tests/integration
+```
+
+Use three refresh tokens issued by the PKCE helper with the `core`, `core+sharing`, and
+`core+sharing+content` presets respectively. The suite verifies base connection/discovery,
+full-refresh snapshots, incremental `entries` state resume, sharing permissions, Riviera
+extraction, schemas, and that configured credential values do not appear in emitted messages.
+Run this suite only from a protected CI environment with repository secrets; do not place these
+values in configuration files or the repository.
+
 `config.json` must use one of the authentication shapes in `source_dropbox/spec.json`:
 
 ```json

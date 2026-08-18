@@ -31,6 +31,9 @@ packages = ["source_dropbox"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "integration: opt-in tests against a real Dropbox app and test account",
+]
 
 [tool.ruff]
 line-length = 100
