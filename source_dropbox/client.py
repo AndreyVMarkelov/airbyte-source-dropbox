@@ -421,7 +421,7 @@ class DropboxClient:
         Refresh failures, including ones raised after connection checking, are always
         reported as connection credential failures rather than raw SDK exceptions.
         """
-        if isinstance(exc, AuthError) and getattr(exc.error, "_tag", None) == "missing_scope":
+        if required_scope and cls._is_missing_scope_error(exc, required_scope):
             if required_scope == "sharing.read":
                 raise DropboxSharingPermissionError(
                     "Dropbox app requires sharing.read to sync sharing streams."
@@ -436,6 +436,19 @@ class DropboxClient:
             else cls._token_exchange_message(exc)
         )
         raise DropboxAuthenticationError(message) from exc
+
+    @staticmethod
+    def _is_missing_scope_error(exc: AuthError | BadInputError, required_scope: str) -> bool:
+        """Recognize both structured and plaintext missing-scope SDK responses.
+
+        Some Dropbox endpoints, including Riviera, return a HTTP 400 plaintext
+        response. The SDK exposes that response as ``BadInputError`` rather than
+        the usual structured ``AuthError(missing_scope)``.
+        """
+        if isinstance(exc, AuthError):
+            return getattr(exc.error, "_tag", None) == "missing_scope"
+        message = exc.message.lower()
+        return "required scope" in message and required_scope.lower() in message
 
     @staticmethod
     def _to_page(result: ListFolderResult) -> DropboxPage:
