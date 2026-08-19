@@ -1,9 +1,10 @@
 import sys
 
-from airbyte_cdk.entrypoint import launch
-
 from destination_dropbox_files.destination import DestinationDropboxFiles
 
 
 def main() -> None:
-    launch(DestinationDropboxFiles(), sys.argv[1:])
+    # Destinations own their protocol runner.  The generic CDK `launch` helper
+    # is source-only and exposes `read` rather than the destination `write`
+    # command.
+    DestinationDropboxFiles().run(sys.argv[1:])
