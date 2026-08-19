@@ -15,6 +15,7 @@ from airbyte_cdk.models import (
     Type,
 )
 
+from destination_dropbox.client import DropboxWriteError
 from destination_dropbox.destination import DestinationDropbox
 from destination_dropbox.validation import RecordValidationError
 
@@ -57,6 +58,7 @@ def test_check_uses_dropbox_account_api() -> None:
         result = DestinationDropbox().check(Mock(), CONFIG)
 
     assert result == AirbyteConnectionStatus(status=Status.SUCCEEDED)
+    client_cls.return_value.verify_root_path.assert_called_once_with("/Exports")
 
 
 def test_check_returns_clean_failure() -> None:
@@ -68,30 +70,94 @@ def test_check_returns_clean_failure() -> None:
     assert "bad credentials" in result.message
 
 
-def test_write_validates_configured_records_without_uploading() -> None:
+def test_write_uploads_configured_records_in_input_order() -> None:
     messages = [
-        AirbyteMessage(type=Type.STATE),
         _record("documents", _data()),
+        _record(
+            "documents",
+            {
+                "path": "folder/second.pdf",
+                "content_base64": base64.b64encode(b"second").decode(),
+            },
+        ),
+    ]
+    client = Mock()
+
+    with patch("destination_dropbox.destination.DropboxClient", return_value=client):
+        assert list(DestinationDropbox().write(CONFIG, _catalog("documents"), messages)) == []
+
+    assert [call.args[0].destination_path for call in client.upload_file.call_args_list] == [
+        "/Exports/folder/report.pdf",
+        "/Exports/folder/second.pdf",
+    ]
+    assert [call.args[1] for call in client.upload_file.call_args_list] == [
+        "overwrite",
+        "overwrite",
     ]
 
-    assert list(DestinationDropbox().write(CONFIG, _catalog("documents"), messages)) == []
+
+def test_write_emits_state_only_after_preceding_upload() -> None:
+    state = AirbyteMessage(type=Type.STATE)
+    client = Mock()
+    messages = [_record("documents", _data()), state]
+
+    with patch("destination_dropbox.destination.DropboxClient", return_value=client):
+        output = list(DestinationDropbox().write(CONFIG, _catalog("documents"), messages))
+
+    assert output == [state]
+    client.upload_file.assert_called_once()
+
+
+def test_write_does_not_emit_later_state_after_upload_failure() -> None:
+    first_state = AirbyteMessage(type=Type.STATE)
+    later_state = AirbyteMessage(type=Type.STATE)
+    client = Mock()
+    client.upload_file.side_effect = [None, DropboxWriteError("Dropbox upload failed")]
+    messages = [
+        _record("documents", _data()),
+        first_state,
+        _record("documents", _data()),
+        later_state,
+    ]
+
+    with patch("destination_dropbox.destination.DropboxClient", return_value=client):
+        output = DestinationDropbox().write(CONFIG, _catalog("documents"), messages)
+        assert next(output) == first_state
+        with pytest.raises(DropboxWriteError, match="record 2 from stream 'documents'"):
+            next(output)
+
+    assert client.upload_file.call_count == 2
 
 
 def test_write_rejects_unknown_stream_with_identity() -> None:
-    with pytest.raises(RecordValidationError, match="Record 1 from stream 'other'"):
-        list(DestinationDropbox().write(CONFIG, _catalog("documents"), [_record("other", _data())]))
+    with patch("destination_dropbox.destination.DropboxClient"):
+        with pytest.raises(RecordValidationError, match="Record 1 from stream 'other'"):
+            list(
+                DestinationDropbox().write(
+                    CONFIG, _catalog("documents"), [_record("other", _data())]
+                )
+            )
 
 
 def test_write_rejects_invalid_record_without_echoing_content() -> None:
     secret_content = "do-not-log-this-content"
-    with pytest.raises(RecordValidationError) as error:
-        list(
-            DestinationDropbox().write(
-                CONFIG,
-                _catalog("documents"),
-                [_record("documents", {"path": "../escape", "content_base64": secret_content})],
+    with patch("destination_dropbox.destination.DropboxClient"):
+        with pytest.raises(RecordValidationError) as error:
+            list(
+                DestinationDropbox().write(
+                    CONFIG,
+                    _catalog("documents"),
+                    [_record("documents", {"path": "../escape", "content_base64": secret_content})],
+                )
             )
-        )
 
     assert "documents" in str(error.value)
     assert secret_content not in str(error.value)
+
+
+def test_check_rejects_an_unknown_conflict_policy() -> None:
+    config = {**CONFIG, "conflict_policy": "rename"}
+    result = DestinationDropbox().check(Mock(), config)
+
+    assert result.status == Status.FAILED
+    assert "conflict_policy" in result.message
