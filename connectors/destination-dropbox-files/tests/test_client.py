@@ -131,3 +131,69 @@ def test_finish_conflict_maps_to_destination_conflict(monkeypatch: pytest.Monkey
     monkeypatch.setattr(client, "_is_finish_conflict", Mock(return_value=True))
     with pytest.raises(DropboxFilesConflictError):
         client._finish("session", 0, b"", "/file", "fail")
+
+
+def test_append_incorrect_offset_reseeks_and_finishes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chunk = 1024 * 1024
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"a" * (3 * chunk))
+    client = _client()
+    error = ApiError("request", Mock(), None, None)
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+    original = client._call
+    failed = False
+
+    def call(operation, action, **kwargs):
+        nonlocal failed
+        if operation == "upload-session append" and not failed:
+            failed = True
+            raise error
+        return original(operation, action, **kwargs)
+
+    monkeypatch.setattr(client, "_call", call)
+    monkeypatch.setattr(client, "_correct_offset", Mock(return_value=2 * chunk))
+    client.upload_staged_file(StagedFile(path, "/file", 3 * chunk, None), "", "overwrite")
+    assert client._client.files_upload_session_finish.call_args.args[1].offset == 2 * chunk
+
+
+def test_finish_incorrect_offset_recomputes_finish(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chunk = 1024 * 1024
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"a" * chunk)
+    client = _client()
+    error = ApiError("request", Mock(), None, None)
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+    original = client._call
+    failed = False
+
+    def call(operation, action, **kwargs):
+        nonlocal failed
+        if operation == "upload-session finish" and not failed:
+            failed = True
+            raise error
+        return original(operation, action, **kwargs)
+
+    monkeypatch.setattr(client, "_call", call)
+    monkeypatch.setattr(client, "_correct_offset", Mock(return_value=0))
+    client.upload_staged_file(StagedFile(path, "/file", chunk, None), "", "overwrite")
+    assert client._client.files_upload_session_finish.call_count == 1
+
+
+def test_third_offset_recovery_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    chunk = 1024 * 1024
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"a" * (4 * chunk))
+    client = _client()
+    error = ApiError("request", Mock(), None, None)
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+    original = client._call
+
+    def call(operation, action, **kwargs):
+        if operation == "upload-session append":
+            raise error
+        return original(operation, action, **kwargs)
+
+    monkeypatch.setattr(client, "_call", call)
+    monkeypatch.setattr(client, "_correct_offset", Mock(side_effect=[2 * chunk, chunk, 2 * chunk]))
+    with pytest.raises(DropboxFilesWriteError, match="unusable offset"):
+        client.upload_staged_file(StagedFile(path, "/file", 4 * chunk, None), "", "overwrite")
