@@ -9,6 +9,7 @@ from destination_dropbox.validation import (
     RecordValidationError,
     normalize_conflict_policy,
     normalize_root_path,
+    normalize_upload_settings,
     validate_record,
 )
 
@@ -18,6 +19,28 @@ def test_normalize_conflict_policy_accepts_supported_values_only() -> None:
     assert normalize_conflict_policy("fail") == "fail"
     with pytest.raises(DestinationConfigurationError, match="conflict_policy"):
         normalize_conflict_policy("rename")
+
+
+def test_upload_settings_defaults_and_bounds() -> None:
+    settings = normalize_upload_settings({})
+    assert settings.max_file_size_bytes == 10 * 1024 * 1024
+    assert settings.session_threshold_bytes == 8 * 1024 * 1024
+    assert settings.chunk_size_bytes == 8 * 1024 * 1024
+
+    settings = normalize_upload_settings(
+        {
+            "max_file_size_mb": 64,
+            "upload_session_threshold_mb": 64,
+            "upload_chunk_size_mb": 16,
+        }
+    )
+    assert settings.max_file_size_bytes == 64 * 1024 * 1024
+    with pytest.raises(DestinationConfigurationError, match="upload_session_threshold_mb"):
+        normalize_upload_settings({"max_file_size_mb": 4, "upload_session_threshold_mb": 5})
+    with pytest.raises(DestinationConfigurationError, match="upload_chunk_size_mb"):
+        normalize_upload_settings({"max_file_size_mb": 10, "upload_chunk_size_mb": 11})
+    with pytest.raises(DestinationConfigurationError, match="max_file_size_mb"):
+        normalize_upload_settings({"max_file_size_mb": 65})
 
 
 def _record(content: bytes = b"report", **overrides: object) -> dict[str, object]:

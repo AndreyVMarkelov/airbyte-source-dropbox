@@ -12,6 +12,8 @@ from typing import Any
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RFC3339_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$")
 CONFLICT_POLICIES = frozenset({"overwrite", "fail"})
+MAX_DESTINATION_FILE_SIZE_MB = 64
+MAX_UPLOAD_CHUNK_SIZE_MB = 16
 
 
 class RecordValidationError(ValueError):
@@ -28,6 +30,13 @@ class ValidatedFileRecord:
     content: bytes
     sha256: str | None
     modified_at: datetime | None
+
+
+@dataclass(frozen=True)
+class UploadSettings:
+    max_file_size_bytes: int
+    session_threshold_bytes: int
+    chunk_size_bytes: int
 
 
 def normalize_root_path(root_path: str) -> str:
@@ -48,6 +57,33 @@ def normalize_root_path(root_path: str) -> str:
 def normalize_conflict_policy(value: Any) -> str:
     if value not in CONFLICT_POLICIES:
         raise DestinationConfigurationError("conflict_policy must be either 'overwrite' or 'fail'.")
+    return value
+
+
+def normalize_upload_settings(config: Mapping[str, Any]) -> UploadSettings:
+    max_file_size_mb = _bounded_positive_integer(
+        config.get("max_file_size_mb", 10), "max_file_size_mb", MAX_DESTINATION_FILE_SIZE_MB
+    )
+    threshold_mb = _bounded_positive_integer(
+        config.get("upload_session_threshold_mb", 8),
+        "upload_session_threshold_mb",
+        max_file_size_mb,
+    )
+    chunk_size_mb = _bounded_positive_integer(
+        config.get("upload_chunk_size_mb", 8),
+        "upload_chunk_size_mb",
+        min(MAX_UPLOAD_CHUNK_SIZE_MB, max_file_size_mb),
+    )
+    return UploadSettings(
+        max_file_size_bytes=max_file_size_mb * 1024 * 1024,
+        session_threshold_bytes=threshold_mb * 1024 * 1024,
+        chunk_size_bytes=chunk_size_mb * 1024 * 1024,
+    )
+
+
+def _bounded_positive_integer(value: Any, name: str, maximum: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= maximum:
+        raise DestinationConfigurationError(f"{name} must be an integer between 1 and {maximum}.")
     return value
 
 

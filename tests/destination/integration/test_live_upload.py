@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 from contextlib import suppress
 from uuid import uuid4
@@ -48,7 +49,9 @@ def _config() -> dict[str, object]:
             "refresh_token": os.environ["DROPBOX_DESTINATION_INTEGRATION_REFRESH_TOKEN"],
         },
         "root_path": root,
-        "max_file_size_mb": 10,
+        "max_file_size_mb": 64,
+        "upload_session_threshold_mb": 8,
+        "upload_chunk_size_mb": 4,
         "conflict_policy": "overwrite",
     }
 
@@ -92,3 +95,44 @@ def test_live_upload_creates_nested_parents_and_cleans_up() -> None:
         # The UUID child is the only path removed by this test; never remove the configured root.
         with suppress(ApiError):
             client._client.files_delete_v2(test_root)
+
+
+def test_live_upload_session_replays_and_checkpoints_after_commit() -> None:
+    config = _config()
+    test_root = f"{config['root_path']}/airbyte-destination-{uuid4().hex}"
+    child_name = test_root.rsplit("/", maxsplit=1)[-1]
+    content = bytes(range(256)) * (12 * 1024 * 1024 // 256)
+    digest = hashlib.sha256(content).hexdigest()
+    record = AirbyteMessage(
+        type=Type.RECORD,
+        record=AirbyteRecordMessage(
+            stream="documents",
+            data={
+                "path": f"{child_name}/large.bin",
+                "content_base64": base64.b64encode(content).decode(),
+                "sha256": digest,
+            },
+            emitted_at=0,
+        ),
+    )
+    state = AirbyteMessage(type=Type.STATE)
+    verification_client = DropboxClient(config)
+    destination_path = f"{test_root}/large.bin"
+
+    try:
+        first_output = list(DestinationDropbox().write(config, _catalog(), [record, state]))
+        assert first_output == [state]
+        metadata = verification_client._client.files_get_metadata(destination_path)
+        assert metadata.size == len(content)
+        _, response = verification_client._client.files_download(destination_path)
+        assert hashlib.sha256(response.content).hexdigest() == digest
+
+        # Replaying the same record under overwrite remains safe and checkpoints after commit.
+        replay_output = list(DestinationDropbox().write(config, _catalog(), [record, state]))
+        assert replay_output == [state]
+        _, response = verification_client._client.files_download(destination_path)
+        assert hashlib.sha256(response.content).hexdigest() == digest
+    finally:
+        # The UUID child is the only path removed by this test; never remove the configured root.
+        with suppress(ApiError):
+            verification_client._client.files_delete_v2(test_root)
