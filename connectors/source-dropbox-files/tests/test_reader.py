@@ -31,7 +31,7 @@ def _file(name: str = "report.pdf", size: int = 4) -> FileMetadata:
         size=size,
         client_modified=timestamp,
         server_modified=timestamp,
-        content_hash="dropbox-hash",
+        content_hash="0" * 64,
     )
 
 
@@ -70,6 +70,7 @@ def test_lists_live_files_relative_to_root_and_excludes_folders() -> None:
 def test_oversized_files_are_skipped_before_download() -> None:
     reader = _reader()
     reader.config = _config(file_transfer={"max_file_size_mb": 1})
+    reader._client = Mock()
     reader._client.files_list_folder.return_value = SimpleNamespace(
         entries=[_file(size=1024 * 1024 + 1)], has_more=False
     )

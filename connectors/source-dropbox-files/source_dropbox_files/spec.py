@@ -11,6 +11,9 @@ from airbyte_cdk.sources.file_based.config.unstructured_format import Unstructur
 from airbyte_cdk.utils.oneof_option_config import OneOfOptionConfig
 from pydantic.v1 import BaseModel, Field
 
+CDK_FILE_SIZE_LIMIT_BYTES = 1_500_000_000
+MAX_FILE_TRANSFER_SIZE_MB = CDK_FILE_SIZE_LIMIT_BYTES // (1024 * 1024)
+
 
 def _raw_files_stream() -> FileBasedStreamConfig:
     # FileBasedSource requires a stream configuration even though raw transfer never parses it.
@@ -47,8 +50,12 @@ class FileTransferSettings(BaseModel):
     max_file_size_mb: int = Field(
         1024,
         ge=1,
+        le=MAX_FILE_TRANSFER_SIZE_MB,
         title="Maximum File Size (MB)",
-        description="Files above this limit are skipped and reported without a file reference.",
+        description=(
+            "Files above this limit are skipped and reported without a file reference. "
+            f"Limited to {MAX_FILE_TRANSFER_SIZE_MB} MiB by Airbyte native staging."
+        ),
     )
 
 
