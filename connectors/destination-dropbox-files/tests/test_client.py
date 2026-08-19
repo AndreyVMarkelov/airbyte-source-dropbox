@@ -2,7 +2,10 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from destination_dropbox_files.client import DropboxFilesClient
+import pytest
+from dropbox.exceptions import InternalServerError, RateLimitError
+
+from destination_dropbox_files.client import DropboxFilesClient, DropboxFilesWriteError
 from destination_dropbox_files.validation import StagedFile
 
 
@@ -88,3 +91,21 @@ def test_exact_chunk_boundary_finishes_with_empty_payload(tmp_path: Path) -> Non
     assert finish.args[0] == b""
     assert finish.args[1].offset == chunk
     assert finish.args[2].mode.is_overwrite()
+
+
+def test_transient_request_retries_then_succeeds() -> None:
+    sleeper = Mock()
+    client = DropboxFilesClient(
+        {"credentials": {"auth_type": "access_token", "access_token": "token"}}, sleeper=sleeper
+    )
+    action = Mock(side_effect=[RateLimitError("request", backoff=0), "ok"])
+
+    assert client._call("append", action) == "ok"
+    assert action.call_count == 2
+    sleeper.assert_called_once_with(1)
+
+
+def test_transient_request_exhaustion_is_a_write_error() -> None:
+    client = _client()
+    with pytest.raises(DropboxFilesWriteError, match="retry budget"):
+        client._call("append", Mock(side_effect=InternalServerError("request", 500, "error")))
