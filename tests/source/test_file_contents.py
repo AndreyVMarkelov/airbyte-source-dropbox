@@ -55,7 +55,7 @@ def _file(name: str = "report.PDF", size: int = 1024) -> FileMetadata:
 
 
 def _schema() -> dict[str, object]:
-    path = Path(__file__).parents[1] / "source_dropbox" / "schemas" / "file_contents.json"
+    path = Path(__file__).parents[2] / "source_dropbox" / "schemas" / "file_contents.json"
     return json.loads(path.read_text())
 
 

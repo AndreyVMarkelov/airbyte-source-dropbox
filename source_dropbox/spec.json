@@ -88,7 +88,7 @@
         "properties": {
           "allowed_extensions": {
             "title": "Allowed Extensions",
-            "description": "Explicit lowercase extension allow-list, for example .pdf or .docx. An empty list disables extraction.",
+            "description": "Explicit extension allow-list, for example .pdf or .docx. Matching is case-insensitive; an empty list disables extraction.",
             "type": "array",
             "items": {"type": "string"},
             "default": []

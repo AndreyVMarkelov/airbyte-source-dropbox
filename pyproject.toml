@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "airbyte-source-dropbox"
+name = "airbyte-dropbox"
 version = "0.1.0"
-description = "Airbyte source connector for Dropbox"
+description = "Airbyte source and destination connectors for Dropbox"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = { text = "MIT" }
@@ -24,9 +24,10 @@ dev = [
 
 [project.scripts]
 source-dropbox = "source_dropbox.run:main"
+destination-dropbox = "destination_dropbox.run:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["source_dropbox"]
+packages = ["source_dropbox", "destination_dropbox"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,8 +1,10 @@
-.DS_Store
+.git/
+.github/
 .idea/
+.venv/
 .pytest_cache/
 .ruff_cache/
-.venv/
 __pycache__/
 *.py[cod]
-secrets/config.json
+secrets/
+tests/

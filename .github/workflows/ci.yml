@@ -24,5 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: docker build --tag airbyte/source-dropbox:ci .
+      - run: docker build -f docker/source.Dockerfile --tag airbyte/source-dropbox:ci .
       - run: docker run --rm airbyte/source-dropbox:ci spec
+      - run: docker build -f docker/destination.Dockerfile --tag airbyte/destination-dropbox:ci .
+      - run: docker run --rm airbyte/destination-dropbox:ci spec

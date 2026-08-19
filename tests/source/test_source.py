@@ -171,7 +171,7 @@ def test_entries_does_not_advance_state_when_the_cdk_stops_mid_page() -> None:
 
 
 def test_spec_declares_supported_authentication_shapes() -> None:
-    spec_path = Path(__file__).parents[1] / "source_dropbox" / "spec.json"
+    spec_path = Path(__file__).parents[2] / "source_dropbox" / "spec.json"
     spec = json.loads(spec_path.read_text())
     credentials = spec["connectionSpecification"]["properties"]["credentials"]
 

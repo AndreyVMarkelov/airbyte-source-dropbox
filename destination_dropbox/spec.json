@@ -1,0 +1,52 @@
+{
+  "documentationUrl": "https://github.com/AndreyVMarkelov/airbyte-source-dropbox",
+  "connectionSpecification": {
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "title": "Dropbox Destination Spec",
+    "type": "object",
+    "required": ["credentials"],
+    "additionalProperties": false,
+    "properties": {
+      "credentials": {
+        "title": "Dropbox authentication",
+        "type": "object",
+        "oneOf": [
+          {
+            "title": "OAuth 2.0 refresh token (recommended)",
+            "required": ["auth_type", "app_key", "refresh_token"],
+            "additionalProperties": false,
+            "properties": {
+              "auth_type": {"type": "string", "const": "oauth2_pkce", "order": 0},
+              "app_key": {"title": "Dropbox App Key", "type": "string", "order": 1},
+              "refresh_token": {"title": "Dropbox Refresh Token", "type": "string", "airbyte_secret": true, "order": 2}
+            }
+          },
+          {
+            "title": "Access token (development/manual testing only)",
+            "required": ["auth_type", "access_token"],
+            "additionalProperties": false,
+            "properties": {
+              "auth_type": {"type": "string", "const": "access_token", "order": 0},
+              "access_token": {"title": "Dropbox Access Token", "type": "string", "airbyte_secret": true, "order": 1}
+            }
+          }
+        ]
+      },
+      "root_path": {
+        "title": "Dropbox destination root",
+        "description": "Absolute Dropbox path under which all relative record paths will be resolved. Use an empty value for the app root.",
+        "type": "string",
+        "default": "",
+        "examples": ["", "/Exports"]
+      },
+      "max_file_size_mb": {
+        "title": "Maximum decoded file size (MB)",
+        "description": "Maximum decoded content_base64 size accepted per record. This connector does not yet upload files.",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50,
+        "default": 10
+      }
+    }
+  }
+}
