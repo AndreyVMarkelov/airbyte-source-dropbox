@@ -5,7 +5,7 @@ from typing import Any
 
 import dropbox
 from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
-from dropbox.files import CreateFolderError, UploadError, WriteMode
+from dropbox.files import CreateFolderError, FolderMetadata, UploadError, WriteMode
 
 from destination_dropbox.validation import ValidatedFileRecord
 
@@ -24,6 +24,10 @@ class DropboxWriteError(RuntimeError):
 
 class DropboxConflictError(DropboxWriteError):
     """Raised when the strict conflict policy finds an existing Dropbox item."""
+
+
+class DropboxRootPathError(DropboxWriteError):
+    """Raised when a configured destination root is missing or is not a folder."""
 
 
 class DropboxClient:
@@ -55,9 +59,30 @@ class DropboxClient:
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited the connection check.") from exc
 
-    def upload_file(self, record: ValidatedFileRecord, conflict_policy: str) -> Any:
+    def verify_root_path(self, root_path: str) -> None:
+        """Require a non-empty configured root to already exist as a Dropbox folder."""
+        if root_path == "":
+            return
+        try:
+            metadata = self._client.files_get_metadata(root_path)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc, required_scope="files.metadata.read")
+        except RateLimitError as exc:
+            raise DropboxRateLimitError(
+                "Dropbox rate limited destination-root validation."
+            ) from exc
+        except ApiError as exc:
+            raise DropboxRootPathError(
+                "Configured root_path does not exist or is not accessible."
+            ) from exc
+        if not isinstance(metadata, FolderMetadata):
+            raise DropboxRootPathError("Configured root_path must refer to a Dropbox folder.")
+
+    def upload_file(
+        self, record: ValidatedFileRecord, conflict_policy: str, root_path: str
+    ) -> Any:
         """Create missing parent folders and upload a validated, bounded record."""
-        self._ensure_parent_folders(record.destination_path)
+        self._ensure_parent_folders(record.destination_path, root_path)
         mode = WriteMode.overwrite if conflict_policy == "overwrite" else WriteMode.add
         try:
             return self._client.files_upload(
@@ -78,9 +103,10 @@ class DropboxClient:
                 ) from exc
             raise DropboxWriteError("Dropbox failed to upload the file.") from exc
 
-    def _ensure_parent_folders(self, destination_path: str) -> None:
+    def _ensure_parent_folders(self, destination_path: str, root_path: str) -> None:
         segments = destination_path.split("/")[1:-1]
-        for index in range(1, len(segments) + 1):
+        root_segment_count = len(root_path.split("/")) - 1 if root_path else 0
+        for index in range(root_segment_count + 1, len(segments) + 1):
             folder_path = "/" + "/".join(segments[:index])
             if folder_path in self._ensured_folders:
                 continue

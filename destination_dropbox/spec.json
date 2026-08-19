@@ -9,6 +9,7 @@
     "properties": {
       "credentials": {
         "title": "Dropbox authentication",
+        "description": "Requires account_info.read and files.metadata.read. Uploading additionally requires files.content.write.",
         "type": "object",
         "oneOf": [
           {
@@ -34,7 +35,7 @@
       },
       "root_path": {
         "title": "Dropbox destination root",
-        "description": "Absolute Dropbox path under which all relative record paths will be resolved. Use an empty value for the app root.",
+        "description": "Existing Dropbox folder under which relative record paths are resolved. The destination creates child folders only. Use an empty value for the app root.",
         "type": "string",
         "default": "",
         "examples": ["", "/Exports"]

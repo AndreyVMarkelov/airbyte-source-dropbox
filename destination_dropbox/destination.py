@@ -34,7 +34,9 @@ class DestinationDropbox(Destination):
         try:
             normalize_root_path(config.get("root_path", ""))
             normalize_conflict_policy(config.get("conflict_policy", "overwrite"))
-            DropboxClient(config).current_account()
+            client = DropboxClient(config)
+            client.current_account()
+            client.verify_root_path(config.get("root_path", ""))
             return AirbyteConnectionStatus(status=Status.SUCCEEDED)
         except Exception as exc:
             return AirbyteConnectionStatus(
@@ -53,6 +55,7 @@ class DestinationDropbox(Destination):
         configured_streams = {stream.stream.name for stream in configured_catalog.streams}
         record_index = 0
         client = DropboxClient(config)
+        client.verify_root_path(root_path)
 
         for message in input_messages:
             if message.type == Type.STATE:
@@ -78,7 +81,7 @@ class DestinationDropbox(Destination):
                     f"Invalid record {record_index} from stream {message.record.stream!r}: {exc}"
                 ) from exc
             try:
-                client.upload_file(record, conflict_policy)
+                client.upload_file(record, conflict_policy, root_path)
             except (DropboxAuthenticationError, DropboxRateLimitError, DropboxWriteError) as exc:
                 raise DropboxWriteError(
                     f"Failed to upload record {record_index} from stream "

@@ -70,23 +70,23 @@ def _catalog() -> ConfiguredAirbyteCatalog:
 def test_live_upload_creates_nested_parents_and_cleans_up() -> None:
     config = _config()
     test_root = f"{config['root_path']}/airbyte-destination-{uuid4().hex}"
-    test_config = {**config, "root_path": test_root}
+    child_name = test_root.rsplit("/", maxsplit=1)[-1]
     record = AirbyteMessage(
         type=Type.RECORD,
         record=AirbyteRecordMessage(
             stream="documents",
             data={
-                "path": "nested/report.txt",
+                "path": f"{child_name}/nested/report.txt",
                 "content_base64": base64.b64encode(b"airbyte destination integration").decode(),
             },
             emitted_at=0,
         ),
     )
     state = AirbyteMessage(type=Type.STATE)
-    client = DropboxClient(test_config)
+    client = DropboxClient(config)
 
     try:
-        output = list(DestinationDropbox().write(test_config, _catalog(), [record, state]))
+        output = list(DestinationDropbox().write(config, _catalog(), [record, state]))
         assert output == [state]
     finally:
         # The UUID child is the only path removed by this test; never remove the configured root.

@@ -58,6 +58,7 @@ def test_check_uses_dropbox_account_api() -> None:
         result = DestinationDropbox().check(Mock(), CONFIG)
 
     assert result == AirbyteConnectionStatus(status=Status.SUCCEEDED)
+    client_cls.return_value.verify_root_path.assert_called_once_with("/Exports")
 
 
 def test_check_returns_clean_failure() -> None:
