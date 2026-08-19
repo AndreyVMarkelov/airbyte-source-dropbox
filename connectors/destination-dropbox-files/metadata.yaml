@@ -1,0 +1,6 @@
+data:
+  connector_type: destination
+  definition_id: destination-dropbox-files
+  docker_repository: airbyte/destination-dropbox-files
+  docker_image_tag: dev
+  supports_file_transfer: true

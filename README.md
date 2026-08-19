@@ -11,6 +11,7 @@ Dropbox connectors for Airbyte, packaged together for shared development and rel
   - `file_contents` is opt-in Markdown extraction through Dropbox Riviera.
 - `destination_dropbox` writes validated file records to Dropbox, creating missing parent folders beneath its configured root.
 - `source-dropbox-files` is a separate native Airbyte File Transfer connector for original Dropbox bytes. It requires Airbyte platform 1.7 or newer and is the migration path for a future file-reference-aware destination.
+- `destination-dropbox-files` consumes native Airbyte file references and streams staged files to Dropbox upload sessions.
 
 ## Source Dropbox authentication
 
@@ -69,4 +70,5 @@ Build connector images from the repository root:
 docker build -f docker/source.Dockerfile -t airbyte/source-dropbox:dev .
 docker build -f docker/destination.Dockerfile -t airbyte/destination-dropbox:dev .
 docker build -f docker/source-files.Dockerfile -t airbyte/source-dropbox-files:dev .
+docker build -f docker/destination-files.Dockerfile -t airbyte/destination-dropbox-files:dev .
 ```
