@@ -45,6 +45,8 @@ class DestinationDropbox(Destination):
         configured_streams = {stream.stream.name for stream in configured_catalog.streams}
         record_index = 0
 
+        # TODO(upload PR): buffer/flush records, then forward each STATE message only after
+        # every preceding record has been durably uploaded. Do not blindly pass state through.
         for message in input_messages:
             if message.type != Type.RECORD:
                 continue
