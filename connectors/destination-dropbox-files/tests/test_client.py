@@ -48,3 +48,43 @@ def test_creates_only_children_below_configured_root(tmp_path: Path) -> None:
     )
 
     client._client.files_create_folder_v2.assert_called_once_with("/Exports/child", autorename=False)
+
+
+def test_multi_chunk_upload_appends_before_final_commit(tmp_path: Path) -> None:
+    chunk = 1024 * 1024
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"a" * chunk + b"b" * chunk + b"c")
+    client = _client()
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+
+    client.upload_staged_file(
+        StagedFile(path=path, destination_path="/file.bin", size=chunk * 2 + 1, sha256=None),
+        "",
+        "fail",
+    )
+
+    append = client._client.files_upload_session_append_v2.call_args
+    assert append.args[0] == b"b" * chunk
+    assert append.args[1].offset == chunk
+    finish = client._client.files_upload_session_finish.call_args
+    assert finish.args[0] == b"c"
+    assert finish.args[1].offset == chunk * 2
+    assert finish.args[2].mode.is_add()
+    assert finish.args[2].strict_conflict is True
+
+
+def test_exact_chunk_boundary_finishes_with_empty_payload(tmp_path: Path) -> None:
+    chunk = 1024 * 1024
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"a" * chunk)
+    client = _client()
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+
+    client.upload_staged_file(
+        StagedFile(path=path, destination_path="/file.bin", size=chunk, sha256=None), "", "overwrite"
+    )
+
+    finish = client._client.files_upload_session_finish.call_args
+    assert finish.args[0] == b""
+    assert finish.args[1].offset == chunk
+    assert finish.args[2].mode.is_overwrite()
