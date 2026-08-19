@@ -13,20 +13,27 @@ from airbyte_cdk.models import (
     Type,
 )
 
-from destination_dropbox.client import DropboxClient
+from destination_dropbox.client import (
+    DropboxAuthenticationError,
+    DropboxClient,
+    DropboxRateLimitError,
+    DropboxWriteError,
+)
 from destination_dropbox.validation import (
     RecordValidationError,
+    normalize_conflict_policy,
     normalize_root_path,
     validate_record,
 )
 
 
 class DestinationDropbox(Destination):
-    """Validate Dropbox file-write records; uploads are intentionally deferred."""
+    """Write validated small files to Dropbox in configured Airbyte record order."""
 
     def check(self, logger: logging.Logger, config: Mapping[str, Any]) -> AirbyteConnectionStatus:
         try:
             normalize_root_path(config.get("root_path", ""))
+            normalize_conflict_policy(config.get("conflict_policy", "overwrite"))
             DropboxClient(config).current_account()
             return AirbyteConnectionStatus(status=Status.SUCCEEDED)
         except Exception as exc:
@@ -41,13 +48,17 @@ class DestinationDropbox(Destination):
         input_messages: Iterable[AirbyteMessage],
     ) -> Iterable[AirbyteMessage]:
         root_path = normalize_root_path(config.get("root_path", ""))
+        conflict_policy = normalize_conflict_policy(config.get("conflict_policy", "overwrite"))
         max_file_size_bytes = int(config.get("max_file_size_mb", 10)) * 1024 * 1024
         configured_streams = {stream.stream.name for stream in configured_catalog.streams}
         record_index = 0
+        client = DropboxClient(config)
 
-        # TODO(upload PR): buffer/flush records, then forward each STATE message only after
-        # every preceding record has been durably uploaded. Do not blindly pass state through.
         for message in input_messages:
+            if message.type == Type.STATE:
+                # Reaching this message proves every preceding record was uploaded successfully.
+                yield message
+                continue
             if message.type != Type.RECORD:
                 continue
             record_index += 1
@@ -57,7 +68,7 @@ class DestinationDropbox(Destination):
                     "is not in the configured catalog."
                 )
             try:
-                validate_record(
+                record = validate_record(
                     message.record.data,
                     root_path=root_path,
                     max_file_size_bytes=max_file_size_bytes,
@@ -66,5 +77,10 @@ class DestinationDropbox(Destination):
                 raise RecordValidationError(
                     f"Invalid record {record_index} from stream {message.record.stream!r}: {exc}"
                 ) from exc
-
-        return ()
+            try:
+                client.upload_file(record, conflict_policy)
+            except (DropboxAuthenticationError, DropboxRateLimitError, DropboxWriteError) as exc:
+                raise DropboxWriteError(
+                    f"Failed to upload record {record_index} from stream "
+                    f"{message.record.stream!r}: {exc}"
+                ) from exc

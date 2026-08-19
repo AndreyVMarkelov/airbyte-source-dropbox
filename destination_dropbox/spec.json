@@ -41,11 +41,18 @@
       },
       "max_file_size_mb": {
         "title": "Maximum decoded file size (MB)",
-        "description": "Maximum decoded content_base64 size accepted per record. This connector does not yet upload files.",
+        "description": "Maximum decoded content_base64 size uploaded per record. Files larger than this limit require a future upload-session connector version.",
         "type": "integer",
         "minimum": 1,
         "maximum": 50,
         "default": 10
+      },
+      "conflict_policy": {
+        "title": "File conflict policy",
+        "description": "overwrite replaces an existing file and is safe for replay. fail stops the sync if the destination path already contains a file.",
+        "type": "string",
+        "enum": ["overwrite", "fail"],
+        "default": "overwrite"
       }
     }
   }

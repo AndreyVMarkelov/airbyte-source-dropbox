@@ -11,10 +11,15 @@ from typing import Any
 
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RFC3339_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$")
+CONFLICT_POLICIES = frozenset({"overwrite", "fail"})
 
 
 class RecordValidationError(ValueError):
     """Raised when an incoming Airbyte record violates the file contract."""
+
+
+class DestinationConfigurationError(ValueError):
+    """Raised when destination configuration is invalid."""
 
 
 @dataclass(frozen=True)
@@ -38,6 +43,12 @@ def normalize_root_path(root_path: str) -> str:
     if not segments or any(segment in {"", ".", ".."} for segment in segments):
         raise RecordValidationError("root_path contains an invalid path segment.")
     return root_path.rstrip("/")
+
+
+def normalize_conflict_policy(value: Any) -> str:
+    if value not in CONFLICT_POLICIES:
+        raise DestinationConfigurationError("conflict_policy must be either 'overwrite' or 'fail'.")
+    return value
 
 
 def validate_record(

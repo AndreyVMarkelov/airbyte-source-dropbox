@@ -5,10 +5,19 @@ from datetime import UTC
 import pytest
 
 from destination_dropbox.validation import (
+    DestinationConfigurationError,
     RecordValidationError,
+    normalize_conflict_policy,
     normalize_root_path,
     validate_record,
 )
+
+
+def test_normalize_conflict_policy_accepts_supported_values_only() -> None:
+    assert normalize_conflict_policy("overwrite") == "overwrite"
+    assert normalize_conflict_policy("fail") == "fail"
+    with pytest.raises(DestinationConfigurationError, match="conflict_policy"):
+        normalize_conflict_policy("rename")
 
 
 def _record(content: bytes = b"report", **overrides: object) -> dict[str, object]:
