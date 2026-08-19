@@ -86,7 +86,7 @@ def _folder() -> SimpleNamespace:
 
 
 def _schema(name: str) -> dict[str, object]:
-    path = Path(__file__).parents[1] / "source_dropbox" / "schemas" / f"{name}.json"
+    path = Path(__file__).parents[2] / "source_dropbox" / "schemas" / f"{name}.json"
     return json.loads(path.read_text())
 
 

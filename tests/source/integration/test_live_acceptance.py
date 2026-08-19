@@ -104,7 +104,7 @@ def _states(messages: Iterable[object]) -> list[AirbyteStateMessage]:
 
 
 def _schema(stream_name: str) -> dict[str, object]:
-    schema_path = Path(__file__).parents[2] / "source_dropbox" / "schemas" / f"{stream_name}.json"
+    schema_path = Path(__file__).parents[3] / "source_dropbox" / "schemas" / f"{stream_name}.json"
     return json.loads(schema_path.read_text())
 
 

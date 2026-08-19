@@ -1,144 +1,58 @@
-# Airbyte Source Dropbox
+# Airbyte Dropbox
 
-Airbyte source connector for Dropbox with incremental sync, metadata ingestion, and optional document extraction.
+Dropbox connectors for Airbyte, packaged together for shared development and release tooling.
 
-Current connector version: **0.1.0**. See [CHANGELOG.md](CHANGELOG.md) for release notes.
+## Connectors
 
-## Status
+- `source_dropbox` provides Dropbox metadata, change, sharing, and optional Markdown-extraction streams:
+  - `entries` is the canonical incremental change stream for files, folders, and deletions.
+  - `files` and `folders` are current metadata snapshots.
+  - `shared_links` and `shared_folders` are sharing snapshots.
+  - `file_contents` is opt-in Markdown extraction through Dropbox Riviera.
+- `destination_dropbox` defines the Dropbox file-write contract. It authenticates and validates input records, but does **not** upload or otherwise mutate Dropbox in this first release.
 
-Early development.
+## Source Dropbox authentication
 
-## Streams
+Create a scoped Dropbox app in the [Dropbox App Console](https://www.dropbox.com/developers/apps). Core streams require `account_info.read` and `files.metadata.read`; sharing streams additionally require `sharing.read`; `file_contents` additionally requires `files.content.read`.
 
-- `entries` — canonical change stream for files, folders, and deletions from Dropbox `list_folder`; supports incremental sync.
-- `files` — current full-refresh snapshot of Dropbox file metadata.
-- `folders` — current full-refresh snapshot of Dropbox folder metadata.
-- `shared_links` — current full-refresh inventory of account shared links.
-- `shared_folders` — current full-refresh inventory of shared folders available to the account.
-- `file_contents` — opt-in full-refresh Markdown extraction for configured document extensions.
+For production, create a refresh token with the PKCE helper and copy its generated App Key and Refresh Token values into the Airbyte UI:
 
-## Authentication
+```bash
+python -m source_dropbox.oauth authorize --app-key <APP_KEY>
+```
 
-### Recommended: PKCE refresh token
+The helper defaults to all connector scopes. Use `--scope-preset core` or `--scope-preset core+sharing` to request less. Connection checking requires only core credentials; missing optional scopes fail only when their corresponding streams are selected. An access token remains available as an explicit development/manual option.
 
-1. Create a scoped Dropbox app in the [Dropbox App Console](https://www.dropbox.com/developers/apps). Choose **Full Dropbox** access if the connector must read existing account content.
-2. In the app's **Permissions** tab, enable the scopes for the streams you plan to use:
-   - Core streams (`entries`, `files`, `folders`): `account_info.read`, `files.metadata.read`.
-   - `shared_links`, `shared_folders`: `sharing.read`.
-   - `file_contents`: `files.content.read`.
-3. Run the helper locally (it uses PKCE and never asks for a client secret):
+`entries` keeps Dropbox cursor state internal. Incremental jobs resume from the stored cursor; full refresh jobs always start at the configured root, even when an earlier state is supplied.
 
-   ```bash
-   python -m source_dropbox.oauth authorize --app-key <APP_KEY>
-   ```
+## Destination file-write contract
 
-   It prints an authorization URL. Approve it in Dropbox, copy the displayed code back into the helper, then paste the generated credentials JSON into the Airbyte UI. The default preset requests every connector scope. To request less, use `--scope-preset core` or `--scope-preset core+sharing`.
+```json
+{
+  "path": "folder/report.pdf",
+  "content_base64": "...",
+  "sha256": "optional lowercase SHA-256 digest",
+  "modified_at": "2026-08-18T12:00:00Z"
+}
+```
 
-The connector deliberately keeps optional scopes local: connection testing verifies only base credentials. A missing `sharing.read` or `files.content.read` scope produces a clear error only if the corresponding stream is selected.
+The destination accepts non-empty relative POSIX paths only and resolves them below `root_path`. It rejects absolute paths, backslashes, repeated separators, and traversal segments. Content must be RFC 4648 base64 and no larger than `max_file_size_mb` after decoding (10 MiB by default). `sha256`, if present, is verified against the decoded content; it is not Dropbox's `content_hash`. `modified_at`, if present, must be an RFC 3339 timestamp with a timezone.
 
-### Development/manual testing: access token
-
-For short-lived local testing, generate an access token in the Dropbox App Console and choose **Access token (development/manual testing only)** in the Airbyte UI. Do not use this mode for production connections; use the PKCE refresh-token flow instead.
-
-`shared_links` and `shared_folders` require the Dropbox `sharing.read` scope. They are
-full-refresh streams for governance, migration, and RAG ACL enrichment. The core connection
-check and file/folder streams do not require this scope.
-
-`file_contents` requires `files.content.read`. It uses Dropbox Riviera to convert the configured
-connector-supported document extensions to Markdown. Select the stream and configure an explicit
-`file_contents.allowed_extensions` allow-list; an empty allow-list never extracts content. Files
-larger than `file_contents.max_file_size_mb` are skipped. Riviera supports a maximum source size
-of 50 MB. OCR and embedded images are intentionally disabled in this version.
-
-## State and sync modes
-
-Dropbox `list_folder` cursors are internal connector state; they are not emitted in `entries` records. The connector checkpoints only after a complete Dropbox results page.
-
-- **Incremental sync** persists and consumes the saved cursor on the next incremental job, so Dropbox returns changes since that cursor.
-- **Full refresh** always starts a new snapshot at the configured root, even if Airbyte supplies a previous state. Full-refresh jobs can emit page checkpoints while running, but those checkpoints are intentionally not used as the baseline for a later full refresh.
-
-If Dropbox invalidates an incremental cursor, the connector restarts from the configured root. This can replay existing records, so destinations should use the `entry_key` primary key for idempotent upserts/deduplication.
-
-## Compatibility and support policy
-
-- Python: 3.12.
-- Airbyte CDK: `6.61.6`. This is the exact CDK version against which the connector's protocol and checkpoint behavior is tested.
-- Dropbox Python SDK: `>=12.0.2,<13.0.0`.
-
-The connector does not log credentials, refresh tokens, authorization codes, or extracted document content. Use scoped Dropbox apps and grant optional permissions only for the streams you select.
+The production destination credential shape uses a Dropbox app key and refresh token. Future uploads require `files.content.write`; current connection checking requires `account_info.read`.
 
 ## Development
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-pytest
+uv sync --all-extras
+uv run ruff check .
+uv run pytest
 ```
 
-Run the Airbyte commands:
+The default suite is mocked. The opt-in source live suite is read-only and uses the `DROPBOX_INTEGRATION_*` environment variables described in [`tests/source/integration/test_live_acceptance.py`](tests/source/integration/test_live_acceptance.py).
+
+Build connector images from the repository root:
 
 ```bash
-python -m source_dropbox.run spec
-python -m source_dropbox.run check --config secrets/config.json
-python -m source_dropbox.run discover --config secrets/config.json
-python -m source_dropbox.run read \
-  --config secrets/config.json \
-  --catalog secrets/catalog.json
+docker build -f docker/source.Dockerfile -t airbyte/source-dropbox:dev .
+docker build -f docker/destination.Dockerfile -t airbyte/destination-dropbox:dev .
 ```
-
-Build and run the Docker image:
-
-```bash
-docker build -t airbyte/source-dropbox:dev .
-docker run --rm airbyte/source-dropbox:dev spec
-docker run --rm -v "$PWD/secrets:/secrets:ro" airbyte/source-dropbox:dev \
-  check --config /secrets/config.json
-```
-
-### Live Dropbox integration tests
-
-The default test suite uses deterministic mocks and never calls Dropbox. The opt-in live suite
-validates the Airbyte protocol against a dedicated Dropbox test app and account; it does not write
-to Dropbox. Create `/airbyte-integration-test` (or another isolated test path) with at least one
-small `.pdf` or `.docx` file before running it.
-
-```bash
-export DROPBOX_INTEGRATION_APP_KEY="..."
-export DROPBOX_INTEGRATION_REFRESH_TOKEN_CORE="..."
-export DROPBOX_INTEGRATION_REFRESH_TOKEN_SHARING="..."
-export DROPBOX_INTEGRATION_REFRESH_TOKEN_CONTENT="..."
-export DROPBOX_INTEGRATION_TEST_PATH="/airbyte-integration-test"
-# Optional: intentionally invalid/revoked token for negative coverage.
-export DROPBOX_INTEGRATION_INVALID_REFRESH_TOKEN="..."
-# Optional: a fixture path large enough for Dropbox to return multiple pages.
-export DROPBOX_INTEGRATION_PAGINATION_PATH="/airbyte-integration-pagination"
-
-pytest --run-integration tests/integration
-```
-
-Use three refresh tokens issued by the PKCE helper with the `core`, `core+sharing`, and
-`core+sharing+content` presets respectively. The suite verifies base connection/discovery,
-full-refresh snapshots, incremental `entries` state resume, sharing permissions, Riviera
-extraction, schemas, and that configured credential values do not appear in emitted messages.
-Run this suite only from a protected CI environment with repository secrets; do not place these
-values in configuration files or the repository.
-
-`config.json` must use one of the authentication shapes in `source_dropbox/spec.json`:
-
-```json
-{
-  "credentials": {
-    "auth_type": "oauth2_pkce",
-    "app_key": "your-dropbox-app-key",
-    "refresh_token": "your-refresh-token"
-  },
-  "path": "",
-  "recursive": true,
-  "include_deleted": true
-}
-```
-
-## License
-
-MIT

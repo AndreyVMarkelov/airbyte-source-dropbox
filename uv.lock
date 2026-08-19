@@ -61,16 +61,7 @@ wheels = [
 ]
 
 [[package]]
-name = "airbyte-protocol-models-dataclasses"
-version = "0.17.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/8e/2b/c372db5dcab8a1602e7ca1affaff94cdfc0874d1c3ff70745a1e0a97eaa2/airbyte_protocol_models_dataclasses-0.17.1.tar.gz", hash = "sha256:cbccfdf84fabd0b6e325cc57fa0682ae9d386fce8fcb5943faa5df2b7e599919", size = 6558, upload-time = "2025-06-17T16:16:37.237Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/bc/33/4316412499f5678bd0cfe46dc8cceb54335de97965126b35d8d8f9f795da/airbyte_protocol_models_dataclasses-0.17.1-py3-none-any.whl", hash = "sha256:ef83ac56de6208afe0a21ce05bcfbcfc98b98300a76fb3cdf4db2e7f720f1df0", size = 7121, upload-time = "2025-06-17T16:16:36.194Z" },
-]
-
-[[package]]
-name = "airbyte-source-dropbox"
+name = "airbyte-dropbox"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -94,6 +85,15 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.0,<1.0.0" },
 ]
 provides-extras = ["dev"]
+
+[[package]]
+name = "airbyte-protocol-models-dataclasses"
+version = "0.17.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/8e/2b/c372db5dcab8a1602e7ca1affaff94cdfc0874d1c3ff70745a1e0a97eaa2/airbyte_protocol_models_dataclasses-0.17.1.tar.gz", hash = "sha256:cbccfdf84fabd0b6e325cc57fa0682ae9d386fce8fcb5943faa5df2b7e599919", size = 6558, upload-time = "2025-06-17T16:16:37.237Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/33/4316412499f5678bd0cfe46dc8cceb54335de97965126b35d8d8f9f795da/airbyte_protocol_models_dataclasses-0.17.1-py3-none-any.whl", hash = "sha256:ef83ac56de6208afe0a21ce05bcfbcfc98b98300a76fb3cdf4db2e7f720f1df0", size = 7121, upload-time = "2025-06-17T16:16:36.194Z" },
+]
 
 [[package]]
 name = "annotated-types"
