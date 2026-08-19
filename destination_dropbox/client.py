@@ -165,7 +165,7 @@ class DropboxClient:
         session_id = getattr(start, "session_id", None)
         if not isinstance(session_id, str) or not session_id:
             raise DropboxUploadSessionError(
-                "Dropbox returned an invalid upload-session start result."
+                "Dropbox upload-session start returned an invalid result."
             )
 
         commit = self._commit_info(record.destination_path, conflict_policy)
@@ -193,7 +193,7 @@ class DropboxClient:
                     or corrected_offset == offset
                 ):
                     raise DropboxUploadSessionError(
-                        "Dropbox upload session returned an unusable offset recovery."
+                        f"Dropbox upload-session {operation} returned an unusable offset recovery."
                     ) from exc
                 offset = corrected_offset
                 recoveries += 1
@@ -271,15 +271,15 @@ class DropboxClient:
                 ) from exc
         tag = self._session_lookup_tag(exc.error)
         if tag == "closed":
-            message = "Dropbox upload session is closed."
+            message = f"Dropbox upload-session {operation} is closed."
         elif tag == "not_found":
-            message = "Dropbox upload session was not found."
+            message = f"Dropbox upload-session {operation} was not found."
         elif tag == "too_large":
-            message = "Dropbox upload session exceeds Dropbox limits."
+            message = f"Dropbox upload-session {operation} exceeds Dropbox limits."
         elif tag is not None:
-            message = "Dropbox upload session returned an invalid session state."
+            message = f"Dropbox upload-session {operation} returned an invalid session state."
         else:
-            message = f"Dropbox upload session {operation} failed."
+            message = f"Dropbox upload-session {operation} failed."
         raise DropboxUploadSessionError(message) from exc
 
     @staticmethod

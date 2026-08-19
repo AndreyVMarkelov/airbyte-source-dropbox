@@ -239,7 +239,9 @@ def test_upload_session_rejects_malformed_start_result_without_leaking_content()
     client._ensured_folders = {"/Exports/nested"}
     client._client.files_upload_session_start.return_value = SimpleNamespace(session_id=None)
 
-    with pytest.raises(DropboxUploadSessionError, match="invalid upload-session start") as raised:
+    with pytest.raises(
+        DropboxUploadSessionError, match="upload-session start returned an invalid"
+    ) as raised:
         client.upload_file(_sized_record(b"private-content"), "overwrite", "/Exports")
 
     assert "private-content" not in str(raised.value)
@@ -302,7 +304,7 @@ def test_upload_session_recovery_to_complete_finishes_empty_and_is_bounded() -> 
         None,
         None,
     )
-    with pytest.raises(DropboxUploadSessionError, match="unusable offset"):
+    with pytest.raises(DropboxUploadSessionError, match="append returned an unusable offset"):
         client.upload_file(_sized_record(b"0123456789"), "overwrite", "/Exports")
 
 
