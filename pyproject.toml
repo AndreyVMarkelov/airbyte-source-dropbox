@@ -34,6 +34,7 @@ testpaths = ["tests"]
 addopts = "-q"
 markers = [
   "integration: opt-in tests against a real Dropbox app and test account",
+  "file_transfer_integration: opt-in native Dropbox-to-Dropbox migration acceptance tests",
 ]
 
 [tool.ruff]
