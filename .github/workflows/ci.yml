@@ -41,3 +41,16 @@ jobs:
       - run: uv run --directory connectors/source-dropbox-files pytest
       - run: docker build -f docker/source-files.Dockerfile --tag airbyte/source-dropbox-files:ci .
       - run: docker run --rm airbyte/source-dropbox-files:ci spec
+
+  destination_files:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --directory connectors/destination-dropbox-files --all-extras --locked
+      - run: uv run --directory connectors/destination-dropbox-files ruff check .
+      - run: uv run --directory connectors/destination-dropbox-files pytest
+      - run: docker build -f docker/destination-files.Dockerfile --tag airbyte/destination-dropbox-files:ci .
+      - run: docker run --rm airbyte/destination-dropbox-files:ci spec
