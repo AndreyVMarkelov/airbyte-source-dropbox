@@ -3,9 +3,13 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from dropbox.exceptions import InternalServerError, RateLimitError
+from dropbox.exceptions import ApiError, InternalServerError, RateLimitError
 
-from destination_dropbox_files.client import DropboxFilesClient, DropboxFilesWriteError
+from destination_dropbox_files.client import (
+    DropboxFilesClient,
+    DropboxFilesConflictError,
+    DropboxFilesWriteError,
+)
 from destination_dropbox_files.validation import StagedFile
 
 
@@ -109,3 +113,21 @@ def test_transient_request_exhaustion_is_a_write_error() -> None:
     client = _client()
     with pytest.raises(DropboxFilesWriteError, match="retry budget"):
         client._call("append", Mock(side_effect=InternalServerError("request", 500, "error")))
+
+
+def test_existing_folder_conflict_is_reused(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    error = ApiError("request", Mock(), None, None)
+    monkeypatch.setattr(client, "_call", Mock(side_effect=error))
+    monkeypatch.setattr(client, "_folder_conflict", Mock(return_value=True))
+    client._ensure_parents("/root/child/file", "/root")
+    assert "/root/child" in client._folders
+
+
+def test_finish_conflict_maps_to_destination_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    error = ApiError("request", Mock(), None, None)
+    monkeypatch.setattr(client, "_call", Mock(side_effect=error))
+    monkeypatch.setattr(client, "_is_finish_conflict", Mock(return_value=True))
+    with pytest.raises(DropboxFilesConflictError):
+        client._finish("session", 0, b"", "/file", "fail")
