@@ -16,7 +16,10 @@ from dropbox.files import (
     CommitInfo,
     CreateFolderError,
     FolderMetadata,
+    UploadSessionAppendError,
     UploadSessionCursor,
+    UploadSessionFinishError,
+    UploadSessionLookupError,
     WriteMode,
 )
 
@@ -63,25 +66,60 @@ class DropboxFilesClient:
         self._ensure_parents(file.destination_path, root_path)
         with file.path.open("rb") as stream:
             first = stream.read(self._chunk_size)
-            start = self._call("upload-session start", lambda: self._client.files_upload_session_start(first))
+            start = self._call(
+                "upload-session start",
+                lambda: self._client.files_upload_session_start(first),
+            )
             session_id = getattr(start, "session_id", None)
             if not isinstance(session_id, str) or not session_id:
                 raise DropboxFilesWriteError("Dropbox upload-session start returned an invalid result.")
-            offset = len(first)
+            offset, recoveries = len(first), 0
             while True:
-                chunk = stream.read(self._chunk_size)
-                if not chunk:
-                    return self._finish(session_id, offset, b"", file.destination_path, conflict_policy)
-                next_chunk = stream.read(self._chunk_size)
-                if not next_chunk:
-                    return self._finish(session_id, offset, chunk, file.destination_path, conflict_policy)
-                self._call("upload-session append", lambda: self._client.files_upload_session_append_v2(chunk, UploadSessionCursor(session_id, offset)))
-                offset += len(chunk)
-                stream.seek(-len(next_chunk), 1)
+                stream.seek(offset)
+                remaining = file.size - offset
+                payload = stream.read(min(self._chunk_size, remaining))
+                operation = "finish" if remaining <= self._chunk_size else "append"
+                try:
+                    if operation == "finish":
+                        return self._finish(
+                            session_id, offset, payload, file.destination_path, conflict_policy
+                        )
+                    self._call(
+                        "upload-session append",
+                        lambda payload=payload, offset=offset: self._client.files_upload_session_append_v2(
+                            payload, UploadSessionCursor(session_id, offset)
+                        ),
+                        passthrough_api=True,
+                    )
+                    offset += len(payload)
+                except ApiError as exc:
+                    corrected = self._correct_offset(exc.error)
+                    if (
+                        corrected is None
+                        or recoveries >= 2
+                        or corrected < 0
+                        or corrected > file.size
+                        or corrected == offset
+                    ):
+                        raise DropboxFilesWriteError(
+                            f"Dropbox upload-session {operation} returned an unusable offset recovery."
+                        ) from exc
+                    offset, recoveries = corrected, recoveries + 1
 
     def _finish(self, session_id: str, offset: int, payload: bytes, path: str, policy: str) -> Any:
         commit = CommitInfo(path=path, mode=WriteMode.overwrite if policy == "overwrite" else WriteMode.add, autorename=False, strict_conflict=policy == "fail")
-        return self._call("upload-session finish", lambda: self._client.files_upload_session_finish(payload, UploadSessionCursor(session_id, offset), commit))
+        try:
+            return self._call(
+                "upload-session finish",
+                lambda: self._client.files_upload_session_finish(
+                    payload, UploadSessionCursor(session_id, offset), commit
+                ),
+                passthrough_api=True,
+            )
+        except ApiError as exc:
+            if self._is_finish_conflict(exc.error):
+                raise DropboxFilesConflictError("Dropbox found an existing destination file.") from exc
+            raise
 
     def _ensure_parents(self, path: str, root_path: str) -> None:
         parts = path.split("/")[1:-1]
@@ -91,13 +129,17 @@ class DropboxFilesClient:
             if folder in self._folders:
                 continue
             try:
-                self._call("parent-folder creation", lambda folder=folder: self._client.files_create_folder_v2(folder, autorename=False))
+                self._call(
+                    "parent-folder creation",
+                    lambda folder=folder: self._client.files_create_folder_v2(folder, autorename=False),
+                    passthrough_api=True,
+                )
             except ApiError as exc:
                 if not self._folder_conflict(exc):
                     raise DropboxFilesWriteError("Dropbox could not create a parent folder.") from exc
             self._folders.add(folder)
 
-    def _call(self, operation: str, call: Callable[[], Any]) -> Any:
+    def _call(self, operation: str, call: Callable[[], Any], *, passthrough_api: bool = False) -> Any:
         for attempt in range(4):
             try:
                 return call()
@@ -108,6 +150,8 @@ class DropboxFilesClient:
                     raise DropboxFilesWriteError(f"Dropbox {operation} retry budget was exhausted.") from exc
                 self._sleeper(2**attempt)
             except ApiError as exc:
+                if passthrough_api:
+                    raise
                 raise DropboxFilesWriteError(f"Dropbox {operation} failed.") from exc
         raise AssertionError("unreachable")
 
@@ -115,3 +159,17 @@ class DropboxFilesClient:
     def _folder_conflict(exc: ApiError) -> bool:
         error = exc.error
         return isinstance(error, CreateFolderError) and error.is_path() and error.get_path().is_conflict() and error.get_path().get_conflict().is_folder()
+
+    @staticmethod
+    def _correct_offset(error: Any) -> int | None:
+        if isinstance(error, UploadSessionAppendError) and error.is_incorrect_offset():
+            return error.get_incorrect_offset().correct_offset
+        if isinstance(error, UploadSessionFinishError) and error.is_lookup_failed():
+            lookup = error.get_lookup_failed()
+            if isinstance(lookup, UploadSessionLookupError) and lookup.is_incorrect_offset():
+                return lookup.get_incorrect_offset().correct_offset
+        return None
+
+    @staticmethod
+    def _is_finish_conflict(error: Any) -> bool:
+        return isinstance(error, UploadSessionFinishError) and error.is_path() and error.get_path().is_conflict()
