@@ -11,6 +11,16 @@ class FileReferenceValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class PropagationOperation:
+    kind: str
+    file_id: str
+    old_path: str
+    old_content_hash: str
+    new_path: str | None = None
+    new_content_hash: str | None = None
+
+
+@dataclass(frozen=True)
 class StagedFile:
     path: Path
     destination_path: str
@@ -62,6 +72,24 @@ def validate_staged_file(
     )
 
 
+def validate_propagation_operation(value: object) -> PropagationOperation:
+    if not isinstance(value, dict):
+        raise FileReferenceValidationError("Propagation operation must be an object.")
+    kind = value.get("operation")
+    if kind not in {"move", "delete"}:
+        raise FileReferenceValidationError("Propagation operation is invalid.")
+    file_id = _required_string(value, "file_id")
+    old_path = _validate_relative_path(_required_string(value, "old_path"))
+    old_content_hash = _required_string(value, "old_content_hash")
+    if kind == "delete":
+        return PropagationOperation(kind, file_id, old_path, old_content_hash)
+    new_path = _validate_relative_path(_required_string(value, "new_path"))
+    new_content_hash = _required_string(value, "new_content_hash")
+    return PropagationOperation(
+        kind, file_id, old_path, old_content_hash, new_path, new_content_hash
+    )
+
+
 def verify_sha256(file: StagedFile) -> None:
     if not file.sha256:
         return
@@ -71,3 +99,18 @@ def verify_sha256(file: StagedFile) -> None:
             digest.update(chunk)
     if digest.hexdigest() != file.sha256:
         raise FileReferenceValidationError("Staged file SHA-256 does not match source metadata.")
+
+
+def _required_string(value: dict[str, object], key: str) -> str:
+    item = value.get(key)
+    if not isinstance(item, str) or not item:
+        raise FileReferenceValidationError(f"Propagation operation requires {key}.")
+    return item
+
+
+def _validate_relative_path(path: str) -> str:
+    if path.startswith("/") or "\\" in path or "//" in path:
+        raise FileReferenceValidationError("Propagation path is invalid.")
+    if any(part in {"", ".", ".."} for part in path.split("/")):
+        raise FileReferenceValidationError("Propagation path contains an invalid segment.")
+    return path

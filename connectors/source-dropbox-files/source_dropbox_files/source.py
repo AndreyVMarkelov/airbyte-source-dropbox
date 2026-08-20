@@ -11,9 +11,11 @@ from airbyte_cdk.sources.file_based.file_based_source import (
     use_file_transfer,
 )
 from airbyte_cdk.sources.file_based.stream.default_file_based_stream import DefaultFileBasedStream
+from airbyte_cdk.sources.file_based.types import StreamSlice
+from airbyte_cdk.sources.utils.record_helper import stream_data_to_airbyte_message
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 
-from source_dropbox_files.cursor import DropboxFileVersionCursor
+from source_dropbox_files.cursor import DropboxFileVersionCursor, MigrationOperation
 from source_dropbox_files.reader import SourceDropboxFilesStreamReader
 from source_dropbox_files.spec import SourceDropboxFilesSpec
 
@@ -41,9 +43,39 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
                 "rev": {"type": ["null", "string"]},
                 "content_hash": {"type": ["null", "string"]},
                 "sha256": {"type": "string"},
+                "operation": {"type": "string", "enum": ["move", "delete"]},
+                "old_path": {"type": "string"},
+                "new_path": {"type": "string"},
+                "old_content_hash": {"type": "string"},
+                "new_content_hash": {"type": "string"},
             }
         )
         return schema
+
+    def compute_slices(self) -> list[StreamSlice]:
+        if not isinstance(self.cursor, DropboxFileVersionCursor):
+            return list(super().compute_slices())
+        plan = self.cursor.plan_inventory(
+            self.list_files(),
+            rename_policy=self.stream_reader.config.rename_policy,
+            delete_policy=self.stream_reader.config.delete_policy,
+            path=self.stream_reader.config.path,
+            recursive=self.stream_reader.config.recursive,
+        )
+        return [{"operations": plan.operations, self.FILES_KEY: plan.files}]
+
+    def read_records_from_slice(self, stream_slice: StreamSlice):
+        operations = stream_slice.get("operations", [])
+        for operation in operations:
+            assert isinstance(operation, MigrationOperation)
+            yield stream_data_to_airbyte_message(self.name, operation.record())
+            if operation.kind == "move":
+                assert isinstance(self.cursor, DropboxFileVersionCursor)
+                self.cursor.mark_move(operation)
+            else:
+                assert isinstance(self.cursor, DropboxFileVersionCursor)
+                self.cursor.mark_delete(operation)
+        yield from super().read_records_from_slice({self.FILES_KEY: stream_slice[self.FILES_KEY]})
 
 
 class SourceDropboxFiles(FileBasedSource):

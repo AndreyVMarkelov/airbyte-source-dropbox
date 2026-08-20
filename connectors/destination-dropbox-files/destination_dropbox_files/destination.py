@@ -17,6 +17,7 @@ from destination_dropbox_files.client import DropboxFilesClient, DropboxFilesWri
 from destination_dropbox_files.validation import (
     FileReferenceValidationError,
     normalize_root_path,
+    validate_propagation_operation,
     validate_staged_file,
     verify_sha256,
 )
@@ -61,6 +62,17 @@ class DestinationDropboxFiles(Destination):
                 raise FileReferenceValidationError(
                     f"Record {index} from stream {message.record.stream!r} is not configured."
                 )
+            operation = message.record.data.get("operation")
+            if operation is not None:
+                try:
+                    client.apply_propagation(
+                        validate_propagation_operation(message.record.data), root
+                    )
+                except (FileReferenceValidationError, DropboxFilesWriteError) as exc:
+                    raise DropboxFilesWriteError(
+                        f"Failed to apply propagation operation {index} from stream {message.record.stream!r}: {exc}"
+                    ) from exc
+                continue
             reference = message.record.file_reference
             if reference is None:
                 raise FileReferenceValidationError(

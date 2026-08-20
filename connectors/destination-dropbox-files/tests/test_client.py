@@ -10,7 +10,7 @@ from destination_dropbox_files.client import (
     DropboxFilesConflictError,
     DropboxFilesWriteError,
 )
-from destination_dropbox_files.validation import StagedFile
+from destination_dropbox_files.validation import PropagationOperation, StagedFile
 
 
 def _client() -> DropboxFilesClient:
@@ -197,3 +197,67 @@ def test_third_offset_recovery_fails(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr(client, "_correct_offset", Mock(side_effect=[2 * chunk, chunk, 2 * chunk]))
     with pytest.raises(DropboxFilesWriteError, match="unusable offset"):
         client.upload_staged_file(StagedFile(path, "/file", 4 * chunk, None), "", "overwrite")
+
+
+def test_propagated_move_creates_target_parent_and_uses_metadata_move(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client()
+    monkeypatch.setattr(
+        client,
+        "_get_metadata_or_none",
+        Mock(side_effect=[SimpleNamespace(content_hash="old"), None]),
+    )
+
+    client.apply_propagation(
+        PropagationOperation("move", "id:file", "old/file.pdf", "old", "new/file.pdf", "new"),
+        "/Exports",
+    )
+
+    client._client.files_create_folder_v2.assert_called_once_with("/Exports/new", autorename=False)
+    client._client.files_move_v2.assert_called_once_with(
+        "/Exports/old/file.pdf", "/Exports/new/file.pdf", autorename=False
+    )
+
+
+def test_propagated_move_fails_on_existing_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    monkeypatch.setattr(
+        client,
+        "_get_metadata_or_none",
+        Mock(side_effect=[SimpleNamespace(content_hash="old"), SimpleNamespace(content_hash="other")]),
+    )
+
+    with pytest.raises(DropboxFilesConflictError):
+        client.apply_propagation(
+            PropagationOperation("move", "id:file", "old.pdf", "old", "new.pdf", "new"), ""
+        )
+
+
+def test_propagated_move_replay_accepts_already_moved_expected_content(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    client = _client()
+    monkeypatch.setattr(
+        client,
+        "_get_metadata_or_none",
+        Mock(side_effect=[None, SimpleNamespace(content_hash="new")]),
+    )
+
+    client.apply_propagation(
+        PropagationOperation("move", "id:file", "old.pdf", "old", "new.pdf", "new"), ""
+    )
+
+    client._client.files_move_v2.assert_not_called()
+
+
+def test_delete_is_idempotent_and_rejects_changed_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client()
+    monkeypatch.setattr(client, "_get_metadata_or_none", Mock(return_value=None))
+    operation = PropagationOperation("delete", "id:file", "gone.pdf", "hash")
+    client.apply_propagation(operation, "/Exports")
+    client._client.files_delete_v2.assert_not_called()
+
+    monkeypatch.setattr(client, "_get_metadata_or_none", Mock(return_value=SimpleNamespace(content_hash="other")))
+    with pytest.raises(DropboxFilesWriteError, match="no longer matches"):
+        client.apply_propagation(operation, "/Exports")

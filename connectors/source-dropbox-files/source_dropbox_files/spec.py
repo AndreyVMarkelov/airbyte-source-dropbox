@@ -72,6 +72,20 @@ class SourceDropboxFilesSpec(AbstractFileBasedSpec):
         description="Dropbox folder path to transfer. Use an empty string for the app root.",
     )
     recursive: bool = Field(True, title="Recursive")
+    rename_policy: Literal["ignore", "propagate"] = Field(
+        "ignore",
+        title="Rename Policy",
+        description=(
+            "Whether to ignore source renames or propagate them as Dropbox destination moves."
+        ),
+    )
+    delete_policy: Literal["ignore", "delete"] = Field(
+        "ignore",
+        title="Delete Policy",
+        description=(
+            "Whether to retain destination-only files or delete confirmed source deletions."
+        ),
+    )
     file_transfer: FileTransferSettings = Field(default_factory=FileTransferSettings)
     delivery_method: DeliverRawFiles = Field(
         default_factory=DeliverRawFiles,
