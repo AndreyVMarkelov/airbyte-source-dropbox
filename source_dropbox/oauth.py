@@ -21,10 +21,12 @@ TOKEN_URL = "https://api.dropboxapi.com/oauth2/token"
 CORE_SCOPES = ("account_info.read", "files.metadata.read")
 SHARING_SCOPE = "sharing.read"
 CONTENT_SCOPE = "files.content.read"
+CONTENT_WRITE_SCOPE = "files.content.write"
 SCOPE_PRESETS = {
     "core": CORE_SCOPES,
     "core+sharing": (*CORE_SCOPES, SHARING_SCOPE),
     "core+sharing+content": (*CORE_SCOPES, SHARING_SCOPE, CONTENT_SCOPE),
+    "migration": (*CORE_SCOPES, CONTENT_SCOPE, CONTENT_WRITE_SCOPE),
 }
 DEFAULT_SCOPE_PRESET = "core+sharing+content"
 

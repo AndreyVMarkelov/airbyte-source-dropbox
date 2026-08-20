@@ -23,7 +23,17 @@ For production, create a refresh token with the PKCE helper and copy its generat
 python -m source_dropbox.oauth authorize --app-key <APP_KEY>
 ```
 
-The helper defaults to all connector scopes. Use `--scope-preset core` or `--scope-preset core+sharing` to request less. Connection checking requires only core credentials; missing optional scopes fail only when their corresponding streams are selected. An access token remains available as an explicit development/manual option.
+The helper defaults to all connector scopes. Use `--scope-preset core` or `--scope-preset core+sharing` to request less. Use `--scope-preset migration` for native Dropbox-to-Dropbox file transfer; it requests content read and write scopes. Connection checking requires only core credentials; missing optional scopes fail only when their corresponding streams are selected. An access token remains available as an explicit development/manual option.
+
+## Native file-transfer acceptance test
+
+The opt-in end-to-end profile pipes `source-dropbox-files` native file references directly to `destination-dropbox-files`. It expects the configured source root to contain `small.bin` and `nested/large-65mb.bin`; the latter is intentionally above the old 64 MiB in-memory limit. Set `DROPBOX_TRANSFER_SOURCE_CONFIG` and `DROPBOX_TRANSFER_DESTINATION_CONFIG` to local JSON configuration files, then run:
+
+```bash
+uv run pytest --run-file-transfer-integration tests/file_transfer/integration
+```
+
+The test uses source and destination credentials independently, creates a UUID child beneath the configured destination root, and deletes only that child in `finally`. It verifies nested paths, byte-for-byte SHA-256 equality, overwrite replay, and that strict `fail` conflict policy does not release a state message. It never writes credentials to the repository.
 
 `entries` keeps Dropbox cursor state internal. Incremental jobs resume from the stored cursor; full refresh jobs always start at the configured root, even when an earlier state is supplied.
 
