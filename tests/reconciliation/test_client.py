@@ -2,6 +2,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from dropbox.exceptions import InternalServerError
 
 import dropbox_reconciliation.client as reconciliation_client
 from dropbox_reconciliation.client import (
@@ -80,6 +81,33 @@ def test_inventory_records_invalid_relative_path(monkeypatch: pytest.MonkeyPatch
 
     assert not inventory.files
     assert inventory.issues[0].path == "/other/file.txt"
+
+
+def test_inventory_preserves_display_relative_path_when_root_case_differs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(reconciliation_client, "FileMetadata", FakeFile)
+    client = _client()
+    client._client.files_list_folder.return_value = SimpleNamespace(
+        entries=[FakeFile("/source-root/report.pdf", "/Source-Root/Report.pdf")],
+        cursor="done",
+        has_more=False,
+    )
+
+    inventory = client.inventory("/SOURCE-ROOT")
+
+    assert inventory.files["report.pdf"].display_path == "Report.pdf"
+
+
+def test_inventory_normalizes_dropbox_internal_server_errors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(reconciliation_client, "FileMetadata", FakeFile)
+    client = _client()
+    client._client.files_list_folder.side_effect = InternalServerError("request-id", 500, None)
+
+    with pytest.raises(reconciliation_client.ReconciliationError, match="server error"):
+        client.inventory("/root")
 
 
 def test_inventory_rejects_duplicate_normalized_paths(monkeypatch: pytest.MonkeyPatch) -> None:

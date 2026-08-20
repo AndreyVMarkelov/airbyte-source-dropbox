@@ -4,7 +4,13 @@ from collections.abc import Mapping
 from typing import Any, Literal
 
 import dropbox
-from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
+from dropbox.exceptions import (
+    ApiError,
+    AuthError,
+    BadInputError,
+    InternalServerError,
+    RateLimitError,
+)
 from dropbox.files import FileMetadata, FolderMetadata
 
 from dropbox_reconciliation.models import FileInventoryItem, Inventory, InventoryPathIssue
@@ -65,6 +71,10 @@ class DropboxReconciliationClient:
             ) from exc
         except RateLimitError as exc:
             raise ReconciliationError(f"{self.side} Dropbox rate limited root validation.") from exc
+        except InternalServerError as exc:
+            raise ReconciliationError(
+                f"{self.side} Dropbox server error during root validation."
+            ) from exc
         except ApiError as exc:
             raise ReconciliationError(
                 f"{self.side} root_path does not exist or is inaccessible."
@@ -86,6 +96,10 @@ class DropboxReconciliationClient:
             ) from exc
         except RateLimitError as exc:
             raise ReconciliationError(f"{self.side} Dropbox rate limited inventory.") from exc
+        except InternalServerError as exc:
+            raise ReconciliationError(
+                f"{self.side} Dropbox server error during inventory."
+            ) from exc
         except ApiError as exc:
             raise ReconciliationError(f"{self.side} Dropbox inventory failed.") from exc
 
@@ -139,11 +153,7 @@ def _file_item(entry: FileMetadata, root: str) -> FileInventoryItem | None:
         if not path_lower.startswith(f"{prefix}/"):
             return None
         normalized_path = path_lower[len(prefix) + 1 :].lower()
-        display_path = (
-            path_display[len(root) + 1 :]
-            if path_display.startswith(f"{root}/")
-            else normalized_path
-        )
+        display_path = _display_relative_path(path_display, root) or normalized_path
     else:
         if not path_lower.startswith("/"):
             return None
@@ -178,3 +188,15 @@ def _unsafe_item(entry: FileMetadata, path: str) -> FileInventoryItem:
 
 def _has_invalid_segment(path: str) -> bool:
     return "\\" in path or "//" in path or any(part in {"", ".", ".."} for part in path.split("/"))
+
+
+def _display_relative_path(path_display: str, root: str) -> str | None:
+    root_segments = root.split("/")[1:]
+    display_segments = path_display.split("/")[1:]
+    if len(display_segments) <= len(root_segments):
+        return None
+    if [segment.casefold() for segment in display_segments[: len(root_segments)]] != [
+        segment.casefold() for segment in root_segments
+    ]:
+        return None
+    return "/".join(display_segments[len(root_segments) :])
