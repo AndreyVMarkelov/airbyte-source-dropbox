@@ -54,3 +54,14 @@ jobs:
       - run: uv run --directory connectors/destination-dropbox-files pytest
       - run: docker build -f docker/destination-files.Dockerfile --tag airbyte/destination-dropbox-files:ci .
       - run: docker run --rm airbyte/destination-dropbox-files:ci spec
+
+  repair:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --directory connectors/dropbox-repair --all-extras --locked
+      - run: uv run --directory connectors/dropbox-repair ruff check .
+      - run: uv run --directory connectors/dropbox-repair pytest

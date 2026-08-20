@@ -62,6 +62,19 @@ DROPBOX_RECONCILIATION_DESTINATION_CONFIG=/path/destination.json \
 uv run pytest --run-integration tests/reconciliation/integration
 ```
 
+## Targeted repair
+
+`dropbox-repair` consumes a completed reconciliation JSONL report and acts only on `missing` and `mismatched` source records. It streams the source file by stable file ID into an overwrite upload session; `matched`, `extra_destination`, and `error` records are reported as skipped. It never deletes destination-only files.
+
+```bash
+dropbox-repair apply \
+  --report reconciliation.jsonl \
+  --source-config /path/source.json \
+  --destination-config /path/destination.json
+```
+
+The tool validates the entire report before the first mutation, validates every relative path below both configured roots, and checks source revision, size, and Dropbox `content_hash` again before transfer. It emits JSONL only after each durable upload. A malformed report or upload failure stops the run; later files are not claimed as repaired.
+
 `entries` keeps Dropbox cursor state internal. Incremental jobs resume from the stored cursor; full refresh jobs always start at the configured root, even when an earlier state is supplied.
 
 ## Destination file-write contract
