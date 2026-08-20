@@ -23,6 +23,11 @@ change with rename or deletion propagation enabled fails before any destination
 mutation; with both policies set to `ignore`, the connector starts a safe fresh
 inventory for the new scope.
 
+Existing version-1 state has no scope binding. Upgrade it with both propagation
+policies set to `ignore` once; that run performs a safe fresh inventory and
+emits version-2 state. Rename or deletion propagation intentionally fails closed
+until that scoped checkpoint exists.
+
 `rename_policy` and `delete_policy` both default to `ignore`. Set
 `rename_policy` to `propagate` to move unchanged files at the destination
 without downloading their bytes. Set `delete_policy` to `delete` to remove a

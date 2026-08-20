@@ -51,18 +51,22 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         super().__init__(stream_config)
         self._files: dict[str, dict[str, str]] = {}
         self._scope: dict[str, Any] | None = None
+        self._legacy_scope = False
 
     def set_initial_state(self, value: MutableMapping[str, Any]) -> None:
         if not value:
             self._files = {}
             self._scope = None
+            self._legacy_scope = False
             return
-        if value.get("version") != STATE_VERSION:
+        version = value.get("version")
+        if version not in {1, STATE_VERSION}:
             raise ValueError("Dropbox file-transfer state has an unsupported version.")
         raw_files = value.get("files")
         if not isinstance(raw_files, Mapping):
             raise ValueError("Dropbox file-transfer state requires a files object.")
-        self._scope = _parse_scope(value.get("scope"))
+        self._legacy_scope = version == 1
+        self._scope = None if self._legacy_scope else _parse_scope(value.get("scope"))
         parsed: dict[str, dict[str, str]] = {}
         for file_id, entry in raw_files.items():
             if not isinstance(file_id, str) or not file_id:
@@ -129,7 +133,16 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         if delete_policy not in {"ignore", "delete"}:
             raise ValueError("Dropbox file-transfer delete_policy is invalid.")
         scope = _current_scope(path, recursive)
-        if self._scope is None:
+        if self._legacy_scope:
+            if rename_policy == "propagate" or delete_policy == "delete":
+                raise ValueError(
+                    "Dropbox file-transfer legacy state has no traversal scope; disable "
+                    "rename/delete propagation for one fresh inventory."
+                )
+            self._files = {}
+            self._scope = scope
+            self._legacy_scope = False
+        elif self._scope is None:
             self._scope = scope
         elif self._scope != scope:
             if rename_policy == "propagate" or delete_policy == "delete":

@@ -118,7 +118,7 @@ def test_empty_legacy_state_starts_a_first_sync() -> None:
 @pytest.mark.parametrize(
     "state",
     [
-        {"version": 1, "files": {}},
+        {"version": 3, "files": {}},
         {"version": 2, "files": {}},
         {"version": 1, "files": []},
         {"version": 1, "files": {"": {"path": "a", "rev": "r", "content_hash": "h"}}},
@@ -306,3 +306,59 @@ def test_scope_mismatch_resets_non_propagating_incremental_state() -> None:
     assert plan.operations == []
     assert plan.files == [current]
     assert cursor.get_state()["scope"] == {"path": "/Other", "recursive": False}
+
+
+def test_legacy_v1_state_refreshes_non_destructively_into_v2_scope_state() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 1,
+            "files": {
+                "id:old": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+    current = _file(file_id="id:current", path="current.pdf")
+
+    plan = cursor.plan_inventory(
+        [current],
+        rename_policy="ignore",
+        delete_policy="ignore",
+        path="/Company",
+        recursive=True,
+    )
+
+    assert plan.operations == []
+    assert plan.files == [current]
+    assert cursor.get_state() == {
+        "version": 2,
+        "scope": {"path": "/Company", "recursive": True},
+        "files": {},
+    }
+
+
+@pytest.mark.parametrize(
+    "rename_policy, delete_policy",
+    [("propagate", "ignore"), ("ignore", "delete")],
+)
+def test_legacy_v1_state_fails_closed_for_propagation(
+    rename_policy: str, delete_policy: str
+) -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 1,
+            "files": {
+                "id:old": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="legacy state has no traversal scope"):
+        cursor.plan_inventory(
+            [],
+            rename_policy=rename_policy,
+            delete_policy=delete_policy,
+            path="/Company",
+            recursive=True,
+        )
