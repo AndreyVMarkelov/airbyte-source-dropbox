@@ -44,13 +44,13 @@ class DropboxRepairClient:
         kwargs = {"max_retries_on_error": 0, "max_retries_on_rate_limit": 0}
         if credentials.get("auth_type") == "oauth2_pkce":
             self._client = dropbox.Dropbox(
-                oauth2_refresh_token=credentials.get("refresh_token"),
-                app_key=credentials.get("app_key"),
+                oauth2_refresh_token=_required_credential(credentials, "refresh_token", side),
+                app_key=_required_credential(credentials, "app_key", side),
                 **kwargs,
             )
         elif credentials.get("auth_type") == "access_token":
             self._client = dropbox.Dropbox(
-                oauth2_access_token=credentials.get("access_token"), **kwargs
+                oauth2_access_token=_required_credential(credentials, "access_token", side), **kwargs
             )
         else:
             raise RepairError(f"{side} credentials use an unsupported auth_type.")
@@ -76,12 +76,12 @@ class DropboxRepairClient:
         self, source: Mapping[str, Any], source_root: str, relative_path: str, chunk_size: int
     ) -> Path:
         try:
-            metadata, response = self._client.files_download(source["file_id"])
-        except (AuthError, BadInputError) as exc:
-            raise RepairError(
-                "source credentials are invalid or missing files.content.read."
-            ) from exc
-        except (ApiError, RateLimitError, InternalServerError) as exc:
+            metadata, response = self._call(
+                lambda: self._client.files_download(source["file_id"]),
+                "source file download",
+                passthrough_api=True,
+            )
+        except ApiError as exc:
             raise SourceDriftError("source file is unavailable for repair.") from exc
         if (
             not isinstance(metadata, FileMetadata)
@@ -232,6 +232,13 @@ def normalize_root(value: object) -> str:
     if value and any(part in {"", ".", ".."} for part in value.split("/")[1:]):
         raise RepairError("root_path contains an invalid segment.")
     return value.rstrip("/")
+
+
+def _required_credential(credentials: Mapping[str, Any], name: str, side: str) -> str:
+    value = credentials.get(name)
+    if not isinstance(value, str) or not value.strip():
+        raise RepairError(f"{side} credentials require a non-empty {name}.")
+    return value
 
 
 def destination_path(root: str, relative_path: str) -> str:

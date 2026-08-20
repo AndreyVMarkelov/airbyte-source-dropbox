@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from dropbox.exceptions import ApiError
+from dropbox.exceptions import ApiError, InternalServerError
 
 from dropbox_repair.client import DropboxRepairClient, RepairError
 
@@ -94,3 +94,26 @@ def test_third_incorrect_offset_recovery_fails(
     monkeypatch.setattr(client, "_correct_offset", Mock(side_effect=[8, 4, 8]))
     with pytest.raises(RepairError, match="unusable offset"):
         client.upload_staged_file(staged, "/target.bin", "", 4)
+
+
+def test_source_download_retries_transient_failure_then_fails_run() -> None:
+    client = _client()
+    client._client.files_download.side_effect = InternalServerError("request", 500, None)
+
+    with pytest.raises(RepairError, match="retry budget"):
+        client.stage_source_file(
+            {"file_id": "id", "rev": "rev", "size": 0, "content_hash": "hash"},
+            "",
+            "file.bin",
+            4,
+        )
+
+    assert client._client.files_download.call_count == 4
+    assert client._sleeper.call_count == 3
+
+
+def test_empty_access_token_is_rejected_before_sdk_construction() -> None:
+    with pytest.raises(RepairError, match="non-empty access_token"):
+        DropboxRepairClient(
+            {"credentials": {"auth_type": "access_token", "access_token": ""}}, "source"
+        )
