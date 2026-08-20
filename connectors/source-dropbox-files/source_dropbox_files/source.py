@@ -59,6 +59,8 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
             self.list_files(),
             rename_policy=self.stream_reader.config.rename_policy,
             delete_policy=self.stream_reader.config.delete_policy,
+            path=self.stream_reader.config.path,
+            recursive=self.stream_reader.config.recursive,
         )
         return [{"operations": plan.operations, self.FILES_KEY: plan.files}]
 

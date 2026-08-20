@@ -12,7 +12,7 @@ from airbyte_cdk.sources.file_based.stream.cursor.abstract_file_based_cursor imp
     AbstractFileBasedCursor,
 )
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -50,16 +50,19 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
     def __init__(self, stream_config: FileBasedStreamConfig, **_: Any) -> None:
         super().__init__(stream_config)
         self._files: dict[str, dict[str, str]] = {}
+        self._scope: dict[str, Any] | None = None
 
     def set_initial_state(self, value: MutableMapping[str, Any]) -> None:
         if not value:
             self._files = {}
+            self._scope = None
             return
         if value.get("version") != STATE_VERSION:
             raise ValueError("Dropbox file-transfer state has an unsupported version.")
         raw_files = value.get("files")
         if not isinstance(raw_files, Mapping):
             raise ValueError("Dropbox file-transfer state requires a files object.")
+        self._scope = _parse_scope(value.get("scope"))
         parsed: dict[str, dict[str, str]] = {}
         for file_id, entry in raw_files.items():
             if not isinstance(file_id, str) or not file_id:
@@ -91,6 +94,7 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
     def get_state(self) -> MutableMapping[str, Any]:
         return {
             "version": STATE_VERSION,
+            "scope": self._scope or {"path": "", "recursive": True},
             "files": {file_id: self._files[file_id] for file_id in sorted(self._files)},
         }
 
@@ -117,11 +121,24 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         *,
         rename_policy: str,
         delete_policy: str,
+        path: str,
+        recursive: bool,
     ) -> MigrationPlan:
         if rename_policy not in {"ignore", "propagate"}:
             raise ValueError("Dropbox file-transfer rename_policy is invalid.")
         if delete_policy not in {"ignore", "delete"}:
             raise ValueError("Dropbox file-transfer delete_policy is invalid.")
+        scope = _current_scope(path, recursive)
+        if self._scope is None:
+            self._scope = scope
+        elif self._scope != scope:
+            if rename_policy == "propagate" or delete_policy == "delete":
+                raise ValueError(
+                    "Dropbox file-transfer state scope does not match the configured "
+                    "traversal scope."
+                )
+            self._scope = scope
+            self._files = {}
         inventory: dict[str, tuple[RemoteFile, dict[str, str]]] = {}
         for file in all_files:
             file_id, version = _version_for(file)
@@ -195,6 +212,20 @@ def _required_state_string(entry: Mapping[str, Any], field: str, file_id: str) -
     if not isinstance(value, str) or not value:
         raise ValueError(f"Dropbox file-transfer state for {file_id!r} requires non-empty {field}.")
     return value
+
+
+def _parse_scope(value: object) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("Dropbox file-transfer state requires a scope object.")
+    path = value.get("path")
+    recursive = value.get("recursive")
+    if not isinstance(path, str) or not isinstance(recursive, bool):
+        raise ValueError("Dropbox file-transfer state scope is invalid.")
+    return _current_scope(path, recursive)
+
+
+def _current_scope(path: str, recursive: bool) -> dict[str, Any]:
+    return {"path": path.rstrip("/"), "recursive": recursive}
 
 
 def _validate_relative_path(path: str, file_id: str) -> None:

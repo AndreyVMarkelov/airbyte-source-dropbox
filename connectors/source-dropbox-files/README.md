@@ -14,10 +14,14 @@ transient-service failures stop the sync.
 
 After the initial run, state tracks each successfully transferred Dropbox file
 by stable ID, revision, content hash, and relative path. Unchanged byte versions
-are skipped; changed or newly discovered files transfer again. Path-only renames
-are intentionally skipped in this version, so move/rename propagation remains a
-future capability. The destination forwards each state checkpoint only after
-the preceding native file reference has committed to Dropbox.
+are skipped; changed or newly discovered files transfer again. The destination
+forwards each state checkpoint only after the preceding native file reference
+has committed to Dropbox.
+
+State is also bound to the configured root path and `recursive` setting. A scope
+change with rename or deletion propagation enabled fails before any destination
+mutation; with both policies set to `ignore`, the connector starts a safe fresh
+inventory for the new scope.
 
 `rename_policy` and `delete_policy` both default to `ignore`. Set
 `rename_policy` to `propagate` to move unchanged files at the destination

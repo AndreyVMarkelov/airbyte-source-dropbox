@@ -33,7 +33,8 @@ def test_initial_run_transfers_all_files_and_serializes_deterministic_state() ->
     cursor.add_file(second)
 
     assert cursor.get_state() == {
-        "version": 1,
+        "version": 2,
+        "scope": {"path": "", "recursive": True},
         "files": {
             "id:a": {"path": "new.bin", "rev": "rev-1", "content_hash": "hash-1"},
             "id:z": {"path": "nested/report.pdf", "rev": "rev-1", "content_hash": "hash-1"},
@@ -45,7 +46,8 @@ def test_unchanged_and_path_only_changed_files_are_skipped() -> None:
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:file": {"path": "old.pdf", "rev": "rev-1", "content_hash": "hash-1"}
             },
@@ -61,7 +63,8 @@ def test_changed_renamed_file_uses_pinned_target_path_and_updates_only_byte_vers
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:file": {
                     "path": "old/report.pdf",
@@ -91,7 +94,8 @@ def test_changed_byte_version_and_new_file_are_transferred(field: str, value: st
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:file": {"path": "report.pdf", "rev": "rev-1", "content_hash": "hash-1"}
             },
@@ -114,6 +118,7 @@ def test_empty_legacy_state_starts_a_first_sync() -> None:
 @pytest.mark.parametrize(
     "state",
     [
+        {"version": 1, "files": {}},
         {"version": 2, "files": {}},
         {"version": 1, "files": []},
         {"version": 1, "files": {"": {"path": "a", "rev": "r", "content_hash": "h"}}},
@@ -130,7 +135,8 @@ def test_plan_ignores_rename_and_deletion_by_default() -> None:
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:renamed": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"},
                 "id:deleted": {"path": "gone.pdf", "rev": "r1", "content_hash": "h2"},
@@ -142,6 +148,8 @@ def test_plan_ignores_rename_and_deletion_by_default() -> None:
         [_file(file_id="id:renamed", path="new.pdf", rev="r1", content_hash="h1")],
         rename_policy="ignore",
         delete_policy="ignore",
+        path="/Exports",
+        recursive=True,
     )
 
     assert plan.operations == []
@@ -153,7 +161,8 @@ def test_plan_propagates_rename_then_transfers_changed_bytes_and_updates_state()
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:file": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"}
             },
@@ -162,7 +171,11 @@ def test_plan_propagates_rename_then_transfers_changed_bytes_and_updates_state()
     current = _file(path="new.pdf", rev="r2", content_hash="h2")
 
     plan = cursor.plan_inventory(
-        [current], rename_policy="propagate", delete_policy="ignore"
+        [current],
+        rename_policy="propagate",
+        delete_policy="ignore",
+        path="/Exports",
+        recursive=True,
     )
 
     assert [operation.record() for operation in plan.operations] == [
@@ -189,7 +202,8 @@ def test_plan_deletes_only_absent_ids_after_complete_inventory() -> None:
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:present": {"path": "present.pdf", "rev": "r1", "content_hash": "h1"},
                 "id:gone": {"path": "gone.pdf", "rev": "r1", "content_hash": "h2"},
@@ -201,6 +215,8 @@ def test_plan_deletes_only_absent_ids_after_complete_inventory() -> None:
         [_file(file_id="id:present", path="present.pdf", rev="r1", content_hash="h1")],
         rename_policy="ignore",
         delete_policy="delete",
+        path="/Exports",
+        recursive=True,
     )
 
     assert plan.operations[0].record() == {
@@ -219,7 +235,8 @@ def test_move_control_record_precedes_its_source_state_update(
     cursor = _cursor()
     cursor.set_initial_state(
         {
-            "version": 1,
+            "version": 2,
+            "scope": {"path": "/Exports", "recursive": True},
             "files": {
                 "id:file": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"}
             },
@@ -240,3 +257,52 @@ def test_move_control_record_precedes_its_source_state_update(
     assert cursor.get_state()["files"]["id:file"]["path"] == "old.pdf"
     assert list(records) == []
     assert cursor.get_state()["files"]["id:file"]["path"] == "new.pdf"
+
+
+def test_scope_mismatch_fails_before_delete_controls_are_planned() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 2,
+            "scope": {"path": "/Company", "recursive": True},
+            "files": {
+                "id:file": {"path": "report.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="scope does not match"):
+        cursor.plan_inventory(
+            [],
+            rename_policy="ignore",
+            delete_policy="delete",
+            path="/Other",
+            recursive=True,
+        )
+    assert "id:file" in cursor.get_state()["files"]
+
+
+def test_scope_mismatch_resets_non_propagating_incremental_state() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 2,
+            "scope": {"path": "/Company", "recursive": True},
+            "files": {
+                "id:file": {"path": "report.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+    current = _file(file_id="id:new", path="new.pdf")
+
+    plan = cursor.plan_inventory(
+        [current],
+        rename_policy="ignore",
+        delete_policy="ignore",
+        path="/Other",
+        recursive=False,
+    )
+
+    assert plan.operations == []
+    assert plan.files == [current]
+    assert cursor.get_state()["scope"] == {"path": "/Other", "recursive": False}
