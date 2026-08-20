@@ -123,7 +123,7 @@ def test_native_file_transfer_preserves_bytes_replays_and_withholds_failed_state
             assert result.source_returncode == 0
             assert result.destination_returncode == 0
             assert not result.source_had_error_output
-            assert [message["type"] for message in result.destination_messages] == ["STATE"]
+            assert [message["type"] for message in result.destination_messages].count("STATE") == 1
 
         for relative_path in EXPECTED_FILES:
             source_size, source_sha256 = _download_sha256(

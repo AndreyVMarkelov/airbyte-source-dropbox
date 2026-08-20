@@ -24,7 +24,11 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for item in items:
         if "file_transfer_integration" in item.keywords and not run_file_transfer:
             item.add_marker(pytest.mark.skip(reason="pass --run-file-transfer-integration"))
-        elif "integration" in item.keywords and not run_integration:
+        elif (
+            "integration" in item.keywords
+            and "file_transfer_integration" not in item.keywords
+            and not run_integration
+        ):
             item.add_marker(
                 pytest.mark.skip(reason="pass --run-integration to run live Dropbox tests")
             )
