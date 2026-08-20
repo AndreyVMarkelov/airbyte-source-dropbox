@@ -10,22 +10,20 @@ from airbyte_cdk.sources.file_based.file_based_source import (
     preserve_directory_structure,
     use_file_transfer,
 )
-from airbyte_cdk.sources.file_based.stream.cursor.default_file_based_cursor import (
-    DefaultFileBasedCursor,
-)
 from airbyte_cdk.sources.file_based.stream.default_file_based_stream import DefaultFileBasedStream
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
 
+from source_dropbox_files.cursor import DropboxFileVersionCursor
 from source_dropbox_files.reader import SourceDropboxFilesStreamReader
 from source_dropbox_files.spec import SourceDropboxFilesSpec
 
 
-class DropboxSnapshotFileTransferStream(DefaultFileBasedStream):
-    """Raw files are intentionally snapshot-only; no Dropbox cursor is reused."""
+class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
+    """Native transfer stream whose Dropbox versions are tracked by stable file ID."""
 
     @property
     def supports_incremental(self) -> bool:
-        return False
+        return True
 
     @property
     def primary_key(self) -> list[str]:
@@ -65,7 +63,7 @@ class SourceDropboxFiles(FileBasedSource):
             catalog=catalog,
             config=config,
             state=state,
-            cursor_cls=DefaultFileBasedCursor,
+            cursor_cls=DropboxFileVersionCursor,
         )
 
     def check_connection(
@@ -81,7 +79,7 @@ class SourceDropboxFiles(FileBasedSource):
 
     def _make_default_stream(self, *args: Any, **kwargs: Any) -> DefaultFileBasedStream:
         stream_config, cursor, parsed_config = args
-        return DropboxSnapshotFileTransferStream(
+        return DropboxIncrementalFileTransferStream(
             config=stream_config,
             catalog_schema=self.stream_schemas.get(stream_config.name),
             stream_reader=self.stream_reader,

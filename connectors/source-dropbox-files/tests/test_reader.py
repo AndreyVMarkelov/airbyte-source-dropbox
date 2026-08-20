@@ -7,6 +7,7 @@ import pytest
 from dropbox.files import FileMetadata, FolderMetadata
 
 from source_dropbox_files.reader import SourceDropboxFilesStreamReader
+from source_dropbox_files.source import DropboxIncrementalFileTransferStream
 from source_dropbox_files.spec import SourceDropboxFilesSpec
 
 
@@ -65,6 +66,11 @@ def test_lists_live_files_relative_to_root_and_excludes_folders() -> None:
     reader._client.files_list_folder.assert_called_once_with(
         "/Exports", recursive=True, include_deleted=False
     )
+
+
+def test_raw_file_stream_advertises_incremental_sync() -> None:
+    stream = DropboxIncrementalFileTransferStream.__new__(DropboxIncrementalFileTransferStream)
+    assert stream.supports_incremental is True
 
 
 def test_oversized_files_are_skipped_before_download() -> None:

@@ -12,6 +12,13 @@ downloads by Dropbox file ID in bounded chunks, not base64 records. Files above
 during its download is also skipped. Authentication, scope, staging, and
 transient-service failures stop the sync.
 
+After the initial run, state tracks each successfully transferred Dropbox file
+by stable ID, revision, content hash, and relative path. Unchanged byte versions
+are skipped; changed or newly discovered files transfer again. Path-only renames
+are intentionally skipped in this version, so move/rename propagation remains a
+future capability. The destination forwards each state checkpoint only after
+the preceding native file reference has committed to Dropbox.
+
 Dropbox scopes:
 
 - `account_info.read` for connection checks;
