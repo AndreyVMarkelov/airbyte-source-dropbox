@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "airbyte-dropbox-repair"
+version = "0.1.0"
+description = "Targeted, streaming Dropbox repair from reconciliation reports"
+requires-python = ">=3.12,<3.13"
+dependencies = ["dropbox>=12.0.2,<13.0.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0,<9.0.0", "ruff>=0.6.0,<1.0.0"]
+
+[project.scripts]
+dropbox-repair = "dropbox_repair.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["dropbox_repair"]
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["E501"]
