@@ -33,7 +33,7 @@ The opt-in end-to-end profile pipes `source-dropbox-files` native file reference
 uv run pytest --run-file-transfer-integration tests/file_transfer/integration
 ```
 
-The test verifies nested paths, byte-for-byte SHA-256 equality, overwrite replay, and that strict `fail` conflict policy does not release a state message. It never writes credentials to the repository.
+The test uses source and destination credentials independently, creates a UUID child beneath the configured destination root, and deletes only that child in `finally`. It verifies nested paths, byte-for-byte SHA-256 equality, overwrite replay, and that strict `fail` conflict policy does not release a state message. It never writes credentials to the repository.
 
 `entries` keeps Dropbox cursor state internal. Incremental jobs resume from the stored cursor; full refresh jobs always start at the configured root, even when an earlier state is supplied.
 

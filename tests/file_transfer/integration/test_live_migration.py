@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -27,7 +28,6 @@ class PipelineResult:
     source_returncode: int
     destination_returncode: int
     destination_messages: list[dict[str, Any]]
-    source_had_error_output: bool
 
 
 def _load_config(variable: str) -> dict[str, Any]:
@@ -55,7 +55,9 @@ def _run_pipeline(source_config: Path, destination_config: Path, catalog: Path) 
     source = subprocess.Popen(
         [str(SOURCE_BINARY), "read", "--config", str(source_config), "--catalog", str(catalog)],
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        # Do not pipe stderr without concurrently consuming it: a connector
+        # failure can otherwise fill the pipe and deadlock this acceptance test.
+        stderr=subprocess.DEVNULL,
         text=True,
     )
     assert source.stdout is not None
@@ -70,18 +72,15 @@ def _run_pipeline(source_config: Path, destination_config: Path, catalog: Path) 
         ],
         stdin=source.stdout,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        stderr=subprocess.DEVNULL,
         text=True,
     )
     source.stdout.close()
     destination_output, _ = destination.communicate(timeout=600)
-    assert source.stderr is not None
-    source_error = source.stderr.read()
     return PipelineResult(
         source_returncode=source.wait(timeout=600),
         destination_returncode=destination.returncode,
         destination_messages=[json.loads(line) for line in destination_output.splitlines() if line],
-        source_had_error_output=bool(source_error),
     )
 
 
@@ -107,39 +106,48 @@ def test_native_file_transfer_preserves_bytes_replays_and_withholds_failed_state
     source_config = _load_config("DROPBOX_TRANSFER_SOURCE_CONFIG")
     destination_config = _load_config("DROPBOX_TRANSFER_DESTINATION_CONFIG")
     source_root = source_config["path"].rstrip("/")
-    destination_root = destination_config["root_path"].rstrip("/")
-    verifier = DropboxClient(source_config)
+    configured_destination_root = destination_config["root_path"].rstrip("/")
+    source_verifier = DropboxClient(source_config)
+    destination_verifier = DropboxClient(destination_config)
+    destination_child = f"{configured_destination_root}/airbyte-file-transfer-{uuid4()}"
 
-    with TemporaryDirectory() as temporary_directory:
-        temporary_path = Path(temporary_directory)
-        catalog_path = temporary_path / "catalog.json"
-        catalog_path.write_text(json.dumps(_catalog()))
-        destination_config_path = temporary_path / "destination-overwrite.json"
-        destination_config_path.write_text(json.dumps(destination_config))
+    # The configured root is an operator-owned fixture. This test owns only
+    # its UUID child and cleans it up regardless of the test outcome.
+    destination_verifier._client.files_create_folder_v2(destination_child)  # noqa: SLF001
+    try:
+        with TemporaryDirectory() as temporary_directory:
+            temporary_path = Path(temporary_directory)
+            catalog_path = temporary_path / "catalog.json"
+            catalog_path.write_text(json.dumps(_catalog()))
+            destination_config["root_path"] = destination_child
+            destination_config_path = temporary_path / "destination-overwrite.json"
+            destination_config_path.write_text(json.dumps(destination_config))
 
-        # First write and replay both use overwrite and must safely converge.
-        for _ in range(2):
-            result = _run_pipeline(source_config_path, destination_config_path, catalog_path)
-            assert result.source_returncode == 0
-            assert result.destination_returncode == 0
-            assert not result.source_had_error_output
-            assert [message["type"] for message in result.destination_messages].count("STATE") == 1
+            # First write and replay both use overwrite and must safely converge.
+            for _ in range(2):
+                result = _run_pipeline(source_config_path, destination_config_path, catalog_path)
+                assert result.source_returncode == 0
+                assert result.destination_returncode == 0
+                message_types = [message["type"] for message in result.destination_messages]
+                assert message_types.count("STATE") == 1
 
-        for relative_path in EXPECTED_FILES:
-            source_size, source_sha256 = _download_sha256(
-                verifier, f"{source_root}/{relative_path}"
-            )
-            destination_size, destination_sha256 = _download_sha256(
-                verifier, f"{destination_root}/{relative_path}"
-            )
-            assert destination_size == source_size
-            assert destination_sha256 == source_sha256
+            for relative_path in EXPECTED_FILES:
+                source_size, source_sha256 = _download_sha256(
+                    source_verifier, f"{source_root}/{relative_path}"
+                )
+                destination_size, destination_sha256 = _download_sha256(
+                    destination_verifier, f"{destination_child}/{relative_path}"
+                )
+                assert destination_size == source_size
+                assert destination_sha256 == source_sha256
 
-        failing_config = copy.deepcopy(destination_config)
-        failing_config["conflict_policy"] = "fail"
-        failing_config_path = temporary_path / "destination-fail.json"
-        failing_config_path.write_text(json.dumps(failing_config))
+            failing_config = copy.deepcopy(destination_config)
+            failing_config["conflict_policy"] = "fail"
+            failing_config_path = temporary_path / "destination-fail.json"
+            failing_config_path.write_text(json.dumps(failing_config))
 
-        result = _run_pipeline(source_config_path, failing_config_path, catalog_path)
-        assert result.destination_returncode != 0
-        assert not any(message["type"] == "STATE" for message in result.destination_messages)
+            result = _run_pipeline(source_config_path, failing_config_path, catalog_path)
+            assert result.destination_returncode != 0
+            assert not any(message["type"] == "STATE" for message in result.destination_messages)
+    finally:
+        destination_verifier._client.files_delete_v2(destination_child)  # noqa: SLF001
