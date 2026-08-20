@@ -110,11 +110,13 @@ def test_native_file_transfer_preserves_bytes_replays_and_withholds_failed_state
     source_verifier = DropboxClient(source_config)
     destination_verifier = DropboxClient(destination_config)
     destination_child = f"{configured_destination_root}/airbyte-file-transfer-{uuid4()}"
+    created_destination_child = False
 
     # The configured root is an operator-owned fixture. This test owns only
     # its UUID child and cleans it up regardless of the test outcome.
-    destination_verifier._client.files_create_folder_v2(destination_child)  # noqa: SLF001
     try:
+        destination_verifier._client.files_create_folder_v2(destination_child)  # noqa: SLF001
+        created_destination_child = True
         with TemporaryDirectory() as temporary_directory:
             temporary_path = Path(temporary_directory)
             catalog_path = temporary_path / "catalog.json"
@@ -150,4 +152,5 @@ def test_native_file_transfer_preserves_bytes_replays_and_withholds_failed_state
             assert result.destination_returncode != 0
             assert not any(message["type"] == "STATE" for message in result.destination_messages)
     finally:
-        destination_verifier._client.files_delete_v2(destination_child)  # noqa: SLF001
+        if created_destination_child:
+            destination_verifier._client.files_delete_v2(destination_child)  # noqa: SLF001
