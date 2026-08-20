@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, MutableMapping
+from copy import copy
 from datetime import UTC, datetime
 from typing import Any
 
@@ -62,8 +63,12 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         for file in all_files:
             file_id, version = _version_for(file)
             previous = self._files.get(file_id)
-            if previous is None or _bytes_changed(previous, version):
+            if previous is None:
                 yield file
+            elif _bytes_changed(previous, version):
+                # Rename propagation is deferred. Keep writing changed bytes to the
+                # original destination-relative path until a move policy exists.
+                yield _with_transfer_path(file, previous["path"])
 
 
 def _version_for(file: RemoteFile) -> tuple[str, dict[str, str]]:
@@ -79,6 +84,15 @@ def _version_for(file: RemoteFile) -> tuple[str, dict[str, str]]:
 
 def _bytes_changed(previous: Mapping[str, str], current: Mapping[str, str]) -> bool:
     return previous["rev"] != current["rev"] or previous["content_hash"] != current["content_hash"]
+
+
+def _with_transfer_path(file: RemoteFile, path: str) -> RemoteFile:
+    """Copy the file so current Dropbox metadata is never mutated for a pinned target path."""
+    if hasattr(file, "copy"):
+        return file.copy(update={"uri": path})
+    transferred = copy(file)
+    transferred.uri = path
+    return transferred
 
 
 def _required_state_string(entry: Mapping[str, Any], field: str, file_id: str) -> str:

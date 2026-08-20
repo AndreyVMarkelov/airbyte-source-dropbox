@@ -6,6 +6,10 @@ from airbyte_cdk.models import (
     AirbyteMessage,
     AirbyteRecordMessage,
     AirbyteRecordMessageFileReference,
+    AirbyteStateMessage,
+    AirbyteStateType,
+    AirbyteStreamState,
+    StreamDescriptor,
     Type,
 )
 
@@ -40,6 +44,19 @@ def _record(path: str) -> AirbyteMessage:
     )
 
 
+def _state(version: int) -> AirbyteMessage:
+    return AirbyteMessage(
+        type=Type.STATE,
+        state=AirbyteStateMessage(
+            type=AirbyteStateType.STREAM,
+            stream=AirbyteStreamState(
+                stream_descriptor=StreamDescriptor(name="raw_files"),
+                stream_state={"version": version},
+            ),
+        ),
+    )
+
+
 def test_successful_reference_releases_following_state(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     staged = tmp_path / "file.bin"
     staged.write_bytes(b"x")
@@ -62,3 +79,25 @@ def test_failed_reference_withholds_following_state(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(DropboxFilesWriteError):
         list(DestinationDropboxFiles().write(_config(), _catalog(), [_record(staged.as_uri()), AirbyteMessage(type=Type.STATE)]))
+
+
+def test_retry_forwards_updated_file_state_only_after_successful_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    staged = tmp_path / "file.bin"
+    staged.write_bytes(b"x")
+    state_v2 = _state(2)
+    failed_client = Mock()
+    failed_client.upload_staged_file.side_effect = DropboxFilesWriteError("upload failed")
+    monkeypatch.setattr(
+        "destination_dropbox_files.destination.DropboxFilesClient", Mock(return_value=failed_client)
+    )
+
+    with pytest.raises(DropboxFilesWriteError):
+        list(DestinationDropboxFiles().write(_config(), _catalog(), [_record(staged.as_uri()), state_v2]))
+
+    succeeding_client = Mock()
+    monkeypatch.setattr(
+        "destination_dropbox_files.destination.DropboxFilesClient", Mock(return_value=succeeding_client)
+    )
+    assert list(DestinationDropboxFiles().write(_config(), _catalog(), [_record(staged.as_uri()), state_v2])) == [state_v2]
