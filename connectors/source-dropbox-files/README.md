@@ -19,6 +19,13 @@ are intentionally skipped in this version, so move/rename propagation remains a
 future capability. The destination forwards each state checkpoint only after
 the preceding native file reference has committed to Dropbox.
 
+`rename_policy` and `delete_policy` both default to `ignore`. Set
+`rename_policy` to `propagate` to move unchanged files at the destination
+without downloading their bytes. Set `delete_policy` to `delete` to remove a
+destination file only after a complete source inventory confirms that its stable
+Dropbox file ID is absent. Propagated moves fail if the target path already
+exists; neither policy overwrites an unrelated destination file.
+
 Dropbox scopes:
 
 - `account_info.read` for connection checks;

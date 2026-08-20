@@ -16,6 +16,7 @@ from dropbox.files import (
     CommitInfo,
     CreateFolderError,
     FolderMetadata,
+    GetMetadataError,
     UploadSessionAppendError,
     UploadSessionCursor,
     UploadSessionFinishError,
@@ -23,7 +24,7 @@ from dropbox.files import (
     WriteMode,
 )
 
-from destination_dropbox_files.validation import StagedFile
+from destination_dropbox_files.validation import PropagationOperation, StagedFile
 
 
 class DropboxFilesWriteError(RuntimeError):
@@ -106,6 +107,57 @@ class DropboxFilesClient:
                         ) from exc
                     offset, recoveries = corrected, recoveries + 1
 
+    def apply_propagation(self, operation: PropagationOperation, root_path: str) -> None:
+        old_path = _join_root(root_path, operation.old_path)
+        if operation.kind == "delete":
+            self._delete_file(old_path, operation.old_content_hash)
+            return
+        assert operation.new_path is not None and operation.new_content_hash is not None
+        new_path = _join_root(root_path, operation.new_path)
+        self._move_file(old_path, new_path, operation.old_content_hash, operation.new_content_hash, root_path)
+
+    def _move_file(
+        self, old_path: str, new_path: str, old_hash: str, new_hash: str, root_path: str
+    ) -> None:
+        old_metadata = self._get_metadata_or_none(old_path)
+        new_metadata = self._get_metadata_or_none(new_path)
+        if old_metadata is None:
+            if new_metadata is not None and new_metadata.content_hash in {old_hash, new_hash}:
+                return
+            raise DropboxFilesWriteError("Dropbox rename source is unavailable or destination conflicts.")
+        if old_metadata.content_hash != old_hash:
+            raise DropboxFilesWriteError("Dropbox rename source content no longer matches migration state.")
+        if new_metadata is not None:
+            raise DropboxFilesConflictError("Dropbox rename destination already exists.")
+        self._ensure_parents(new_path, root_path)
+        self._call(
+            "rename propagation",
+            lambda: self._client.files_move_v2(old_path, new_path, autorename=False),
+        )
+
+    def _delete_file(self, path: str, expected_hash: str) -> None:
+        metadata = self._get_metadata_or_none(path)
+        if metadata is None:
+            return
+        if metadata.content_hash != expected_hash:
+            raise DropboxFilesWriteError("Dropbox delete target content no longer matches migration state.")
+        self._call("delete propagation", lambda: self._client.files_delete_v2(path))
+
+    def _get_metadata_or_none(self, path: str) -> Any | None:
+        try:
+            metadata = self._call(
+                "propagation metadata lookup",
+                lambda: self._client.files_get_metadata(path),
+                passthrough_api=True,
+            )
+        except ApiError as exc:
+            if self._is_not_found(exc.error):
+                return None
+            raise DropboxFilesWriteError("Dropbox propagation metadata lookup failed.") from exc
+        if not hasattr(metadata, "content_hash"):
+            raise DropboxFilesWriteError("Dropbox propagation target is not a file.")
+        return metadata
+
     def _finish(self, session_id: str, offset: int, payload: bytes, path: str, policy: str) -> Any:
         commit = CommitInfo(path=path, mode=WriteMode.overwrite if policy == "overwrite" else WriteMode.add, autorename=False, strict_conflict=policy == "fail")
         try:
@@ -173,3 +225,15 @@ class DropboxFilesClient:
     @staticmethod
     def _is_finish_conflict(error: Any) -> bool:
         return isinstance(error, UploadSessionFinishError) and error.is_path() and error.get_path().is_conflict()
+
+    @staticmethod
+    def _is_not_found(error: Any) -> bool:
+        return (
+            isinstance(error, GetMetadataError)
+            and error.is_path()
+            and error.get_path().is_not_found()
+        )
+
+
+def _join_root(root_path: str, relative_path: str) -> str:
+    return f"{root_path}/{relative_path}" if root_path else f"/{relative_path}"

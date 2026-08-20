@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, MutableMapping
 from copy import copy
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,35 @@ from airbyte_cdk.sources.file_based.stream.cursor.abstract_file_based_cursor imp
 )
 
 STATE_VERSION = 1
+
+
+@dataclass(frozen=True)
+class MigrationOperation:
+    kind: str
+    file_id: str
+    old_path: str
+    old_content_hash: str
+    new_path: str | None = None
+    new_content_hash: str | None = None
+
+    def record(self) -> dict[str, str]:
+        record = {
+            "operation": self.kind,
+            "file_id": self.file_id,
+            "old_path": self.old_path,
+            "old_content_hash": self.old_content_hash,
+        }
+        if self.new_path is not None:
+            record["new_path"] = self.new_path
+        if self.new_content_hash is not None:
+            record["new_content_hash"] = self.new_content_hash
+        return record
+
+
+@dataclass(frozen=True)
+class MigrationPlan:
+    operations: list[MigrationOperation]
+    files: list[RemoteFile]
 
 
 class DropboxFileVersionCursor(AbstractFileBasedCursor):
@@ -47,6 +77,17 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         file_id, version = _version_for(file)
         self._files[file_id] = version
 
+    def mark_move(self, operation: MigrationOperation) -> None:
+        previous = self._files.get(operation.file_id)
+        if previous is None or operation.kind != "move" or operation.new_path is None:
+            raise ValueError("Dropbox file-transfer move operation does not match state.")
+        self._files[operation.file_id] = {**previous, "path": operation.new_path}
+
+    def mark_delete(self, operation: MigrationOperation) -> None:
+        if operation.kind != "delete" or operation.file_id not in self._files:
+            raise ValueError("Dropbox file-transfer delete operation does not match state.")
+        del self._files[operation.file_id]
+
     def get_state(self) -> MutableMapping[str, Any]:
         return {
             "version": STATE_VERSION,
@@ -69,6 +110,60 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
                 # Rename propagation is deferred. Keep writing changed bytes to the
                 # original destination-relative path until a move policy exists.
                 yield _with_transfer_path(file, previous["path"])
+
+    def plan_inventory(
+        self,
+        all_files: Iterable[RemoteFile],
+        *,
+        rename_policy: str,
+        delete_policy: str,
+    ) -> MigrationPlan:
+        if rename_policy not in {"ignore", "propagate"}:
+            raise ValueError("Dropbox file-transfer rename_policy is invalid.")
+        if delete_policy not in {"ignore", "delete"}:
+            raise ValueError("Dropbox file-transfer delete_policy is invalid.")
+        inventory: dict[str, tuple[RemoteFile, dict[str, str]]] = {}
+        for file in all_files:
+            file_id, version = _version_for(file)
+            if file_id in inventory:
+                raise ValueError(f"Dropbox inventory contains duplicate file_id {file_id!r}.")
+            inventory[file_id] = (file, version)
+
+        operations: list[MigrationOperation] = []
+        files: list[RemoteFile] = []
+        for file_id in sorted(inventory):
+            file, current = inventory[file_id]
+            previous = self._files.get(file_id)
+            if previous is None:
+                files.append(file)
+                continue
+            path_changed = previous["path"] != current["path"]
+            bytes_changed = _bytes_changed(previous, current)
+            if path_changed and rename_policy == "propagate":
+                operations.append(
+                    MigrationOperation(
+                        "move",
+                        file_id,
+                        previous["path"],
+                        previous["content_hash"],
+                        current["path"],
+                        current["content_hash"],
+                    )
+                )
+                if bytes_changed:
+                    files.append(file)
+            elif bytes_changed:
+                files.append(_with_transfer_path(file, previous["path"]))
+
+        if delete_policy == "delete":
+            for file_id in sorted(set(self._files) - set(inventory)):
+                previous = self._files[file_id]
+                operations.append(
+                    MigrationOperation(
+                        "delete", file_id, previous["path"], previous["content_hash"]
+                    )
+                )
+        return MigrationPlan(operations=operations, files=files)
 
 
 def _version_for(file: RemoteFile) -> tuple[str, dict[str, str]]:

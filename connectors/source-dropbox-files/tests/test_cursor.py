@@ -4,7 +4,8 @@ import pytest
 from airbyte_cdk.sources.file_based.config.file_based_stream_config import FileBasedStreamConfig
 from airbyte_cdk.sources.file_based.config.unstructured_format import UnstructuredFormat
 
-from source_dropbox_files.cursor import DropboxFileVersionCursor
+from source_dropbox_files.cursor import DropboxFileVersionCursor, MigrationOperation
+from source_dropbox_files.source import DropboxIncrementalFileTransferStream
 
 
 def _cursor() -> DropboxFileVersionCursor:
@@ -123,3 +124,119 @@ def test_empty_legacy_state_starts_a_first_sync() -> None:
 def test_invalid_state_is_rejected(state: dict[str, object]) -> None:
     with pytest.raises(ValueError, match="Dropbox file-transfer state"):
         _cursor().set_initial_state(state)
+
+
+def test_plan_ignores_rename_and_deletion_by_default() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 1,
+            "files": {
+                "id:renamed": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"},
+                "id:deleted": {"path": "gone.pdf", "rev": "r1", "content_hash": "h2"},
+            },
+        }
+    )
+
+    plan = cursor.plan_inventory(
+        [_file(file_id="id:renamed", path="new.pdf", rev="r1", content_hash="h1")],
+        rename_policy="ignore",
+        delete_policy="ignore",
+    )
+
+    assert plan.operations == []
+    assert plan.files == []
+    assert cursor.get_state()["files"]["id:renamed"]["path"] == "old.pdf"
+
+
+def test_plan_propagates_rename_then_transfers_changed_bytes_and_updates_state() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 1,
+            "files": {
+                "id:file": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+    current = _file(path="new.pdf", rev="r2", content_hash="h2")
+
+    plan = cursor.plan_inventory(
+        [current], rename_policy="propagate", delete_policy="ignore"
+    )
+
+    assert [operation.record() for operation in plan.operations] == [
+        {
+            "operation": "move",
+            "file_id": "id:file",
+            "old_path": "old.pdf",
+            "old_content_hash": "h1",
+            "new_path": "new.pdf",
+            "new_content_hash": "h2",
+        }
+    ]
+    assert plan.files == [current]
+    cursor.mark_move(plan.operations[0])
+    cursor.add_file(current)
+    assert cursor.get_state()["files"]["id:file"] == {
+        "path": "new.pdf",
+        "rev": "r2",
+        "content_hash": "h2",
+    }
+
+
+def test_plan_deletes_only_absent_ids_after_complete_inventory() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 1,
+            "files": {
+                "id:present": {"path": "present.pdf", "rev": "r1", "content_hash": "h1"},
+                "id:gone": {"path": "gone.pdf", "rev": "r1", "content_hash": "h2"},
+            },
+        }
+    )
+
+    plan = cursor.plan_inventory(
+        [_file(file_id="id:present", path="present.pdf", rev="r1", content_hash="h1")],
+        rename_policy="ignore",
+        delete_policy="delete",
+    )
+
+    assert plan.operations[0].record() == {
+        "operation": "delete",
+        "file_id": "id:gone",
+        "old_path": "gone.pdf",
+        "old_content_hash": "h2",
+    }
+    cursor.mark_delete(plan.operations[0])
+    assert "id:gone" not in cursor.get_state()["files"]
+
+
+def test_move_control_record_precedes_its_source_state_update(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 1,
+            "files": {
+                "id:file": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+    stream = DropboxIncrementalFileTransferStream.__new__(DropboxIncrementalFileTransferStream)
+    stream.config = FileBasedStreamConfig(name="raw_files", format=UnstructuredFormat())
+    stream._cursor = cursor
+    operation = MigrationOperation("move", "id:file", "old.pdf", "h1", "new.pdf", "h1")
+    monkeypatch.setattr(
+        "source_dropbox_files.source.DefaultFileBasedStream.read_records_from_slice",
+        lambda *_args: iter(()),
+    )
+
+    records = stream.read_records_from_slice({"operations": [operation], "files": []})
+    message = next(records)
+    assert message.record.data["operation"] == "move"
+    assert cursor.get_state()["files"]["id:file"]["path"] == "old.pdf"
+    assert list(records) == []
+    assert cursor.get_state()["files"]["id:file"]["path"] == "new.pdf"

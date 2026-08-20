@@ -57,6 +57,22 @@ def _state(version: int) -> AirbyteMessage:
     )
 
 
+def _operation() -> AirbyteMessage:
+    return AirbyteMessage(
+        type=Type.RECORD,
+        record=AirbyteRecordMessage(
+            stream="raw_files",
+            data={
+                "operation": "delete",
+                "file_id": "id:file",
+                "old_path": "gone.pdf",
+                "old_content_hash": "hash",
+            },
+            emitted_at=0,
+        ),
+    )
+
+
 def test_successful_reference_releases_following_state(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     staged = tmp_path / "file.bin"
     staged.write_bytes(b"x")
@@ -101,3 +117,23 @@ def test_retry_forwards_updated_file_state_only_after_successful_upload(
         "destination_dropbox_files.destination.DropboxFilesClient", Mock(return_value=succeeding_client)
     )
     assert list(DestinationDropboxFiles().write(_config(), _catalog(), [_record(staged.as_uri()), state_v2])) == [state_v2]
+
+
+def test_propagation_operation_forwards_state_only_after_success(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _state(2)
+    failed_client = Mock()
+    failed_client.apply_propagation.side_effect = DropboxFilesWriteError("delete failed")
+    monkeypatch.setattr(
+        "destination_dropbox_files.destination.DropboxFilesClient", Mock(return_value=failed_client)
+    )
+
+    with pytest.raises(DropboxFilesWriteError):
+        list(DestinationDropboxFiles().write(_config(), _catalog(), [_operation(), state]))
+
+    succeeding_client = Mock()
+    monkeypatch.setattr(
+        "destination_dropbox_files.destination.DropboxFilesClient", Mock(return_value=succeeding_client)
+    )
+    assert list(DestinationDropboxFiles().write(_config(), _catalog(), [_operation(), state])) == [state]

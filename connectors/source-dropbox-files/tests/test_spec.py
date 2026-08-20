@@ -15,6 +15,8 @@ def test_spec_uses_native_raw_file_delivery_and_hides_generic_streams() -> None:
     assert settings["download_chunk_size_mb"]["maximum"] == 32
     assert settings["max_file_size_mb"]["default"] == 1024
     assert settings["max_file_size_mb"]["maximum"] == MAX_FILE_TRANSFER_SIZE_MB
+    assert schema["properties"]["rename_policy"]["default"] == "ignore"
+    assert schema["properties"]["delete_policy"]["default"] == "ignore"
 
 
 def test_rejects_size_limit_above_native_airbyte_staging_limit() -> None:
@@ -22,4 +24,20 @@ def test_rejects_size_limit_above_native_airbyte_staging_limit() -> None:
         SourceDropboxFilesSpec(
             credentials={"auth_type": "access_token", "access_token": "token"},
             file_transfer={"max_file_size_mb": MAX_FILE_TRANSFER_SIZE_MB + 1},
+        )
+
+
+def test_validates_propagation_policies() -> None:
+    config = SourceDropboxFilesSpec(
+        credentials={"auth_type": "access_token", "access_token": "token"},
+        rename_policy="propagate",
+        delete_policy="delete",
+    )
+    assert config.rename_policy == "propagate"
+    assert config.delete_policy == "delete"
+
+    with pytest.raises(ValueError, match="rename_policy"):
+        SourceDropboxFilesSpec(
+            credentials={"auth_type": "access_token", "access_token": "token"},
+            rename_policy="overwrite",
         )
