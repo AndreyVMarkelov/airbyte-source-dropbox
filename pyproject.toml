@@ -25,9 +25,10 @@ dev = [
 [project.scripts]
 source-dropbox = "source_dropbox.run:main"
 destination-dropbox = "destination_dropbox.run:main"
+dropbox-reconciliation = "dropbox_reconciliation.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["source_dropbox", "destination_dropbox"]
+packages = ["source_dropbox", "destination_dropbox", "dropbox_reconciliation"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

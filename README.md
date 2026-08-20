@@ -35,6 +35,33 @@ uv run pytest --run-file-transfer-integration tests/file_transfer/integration
 
 The test uses source and destination credentials independently, creates a UUID child beneath the configured destination root, and deletes only that child in `finally`. It verifies nested paths, byte-for-byte SHA-256 equality, overwrite replay, and that strict `fail` conflict policy does not release a state message. It never writes credentials to the repository.
 
+## Dropbox-native reconciliation
+
+`dropbox-reconciliation` is a read-only CLI that compares two Dropbox folder roots using normalized relative paths, file size, and Dropbox's `content_hash`. Dropbox `content_hash` is not SHA-256; reconciliation never downloads file bytes or falls back to size-only matching.
+
+Both sides require independent credentials with `account_info.read` and `files.metadata.read`:
+
+```json
+{
+  "source": {"credentials": {"auth_type": "oauth2_pkce", "app_key": "...", "refresh_token": "..."}, "root_path": "/migration-source"},
+  "destination": {"credentials": {"auth_type": "oauth2_pkce", "app_key": "...", "refresh_token": "..."}, "root_path": "/migration-destination"}
+}
+```
+
+```bash
+dropbox-reconciliation compare --config /path/reconciliation.json > report.jsonl
+```
+
+Records are sorted by normalized relative path; the final JSONL line is a summary. A completed comparison exits successfully even when it finds `missing`, `mismatched`, or `extra_destination` files. Invalid roots, credentials, pagination failures, and duplicate normalized paths fail the command because they make the report incomplete or ambiguous.
+
+The opt-in live reconciliation profile uses separate source and destination config paths and creates only UUID children below their configured roots. It requires `files.content.write` only to create and remove those test fixtures:
+
+```bash
+DROPBOX_RECONCILIATION_SOURCE_CONFIG=/path/source.json \
+DROPBOX_RECONCILIATION_DESTINATION_CONFIG=/path/destination.json \
+uv run pytest --run-integration tests/reconciliation/integration
+```
+
 `entries` keeps Dropbox cursor state internal. Incremental jobs resume from the stored cursor; full refresh jobs always start at the configured root, even when an earlier state is supplied.
 
 ## Destination file-write contract
