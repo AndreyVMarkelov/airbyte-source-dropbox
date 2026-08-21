@@ -39,6 +39,14 @@ The test uses source and destination credentials independently, creates a UUID c
 
 `dropbox-reconciliation` is a read-only CLI that compares two Dropbox folder roots using normalized relative paths, file size, and Dropbox's `content_hash`. Dropbox `content_hash` is not SHA-256; reconciliation never downloads file bytes or falls back to size-only matching.
 
+Top-level `status` and `reason` retain their original content meaning: `matched`, `missing`, `mismatched`, `extra_destination`, or `error`. The report also includes richer read-only dimensions:
+
+- `content` repeats the authoritative size/content-hash comparison.
+- `namespace` reports the conservative path/namespace comparison. This version does not guess migrated identity from matching content.
+- `metadata.client_modified` compares UTC-normalized client-modified instants when both sides provide them. A timestamp mismatch does not change top-level content status. `server_modified` is included only as Dropbox-owned provenance and is never treated as a fidelity mismatch.
+
+The summary keeps the original content counters and adds `total_paths` and `metadata_mismatches.client_modified`. Datetime fields are emitted as UTC strings with a `Z` suffix.
+
 Both sides require independent credentials with `account_info.read` and `files.metadata.read`:
 
 ```json

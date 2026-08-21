@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from dropbox_reconciliation.models import FileInventoryItem, Inventory, ReconciliationRecord
+from dropbox_reconciliation.models import (
+    FileInventoryItem,
+    Inventory,
+    ReconciliationRecord,
+    client_modified_dimension,
+)
 
 
 def reconcile(source: Inventory, destination: Inventory) -> list[ReconciliationRecord]:
@@ -18,14 +23,22 @@ def reconcile(source: Inventory, destination: Inventory) -> list[ReconciliationR
     return sorted(records, key=lambda record: record.sort_key)
 
 
-def summarize(records: list[ReconciliationRecord]) -> dict[str, int | str]:
+def summarize(records: list[ReconciliationRecord]) -> dict[str, object]:
     counts = {"matched": 0, "missing": 0, "mismatched": 0, "extra_destination": 0, "errors": 0}
+    metadata_mismatches = {"client_modified": 0}
     for record in records:
         if record.status == "error":
             counts["errors"] += 1
         else:
             counts[record.status] += 1
-    return {"type": "summary", **counts}
+        if client_modified_dimension(record.source, record.destination)["status"] == "mismatched":
+            metadata_mismatches["client_modified"] += 1
+    return {
+        "type": "summary",
+        "total_paths": len(records),
+        **counts,
+        "metadata_mismatches": metadata_mismatches,
+    }
 
 
 def _issue_record(
