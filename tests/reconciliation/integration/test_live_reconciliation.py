@@ -80,11 +80,13 @@ def test_live_reconciliation_uses_independent_roots_and_cleans_up() -> None:
         ]
         assert summarize(records) == {
             "type": "summary",
+            "total_paths": 5,
             "matched": 1,
             "missing": 1,
             "mismatched": 2,
             "extra_destination": 1,
             "errors": 0,
+            "metadata_mismatches": {"client_modified": 0},
         }
     finally:
         if source_created:

@@ -48,11 +48,13 @@ def test_cli_writes_jsonl_to_output_file(monkeypatch: pytest.MonkeyPatch, tmp_pa
     assert lines[0]["reason"] == "source_only"
     assert lines[-1] == {
         "type": "summary",
+        "total_paths": 1,
         "matched": 0,
         "missing": 1,
         "mismatched": 0,
         "extra_destination": 0,
         "errors": 0,
+        "metadata_mismatches": {"client_modified": 0},
     }
 
 
