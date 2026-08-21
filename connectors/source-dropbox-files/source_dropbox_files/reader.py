@@ -37,6 +37,10 @@ class DropboxFileSkipError(RuntimeError):
     """A content-specific error which safely skips one file."""
 
 
+class DropboxCursorResetError(RuntimeError):
+    """Dropbox cannot continue from the stored list_folder cursor."""
+
+
 class DropboxFileRecordData(FileRecordData):
     file_id: str
     relative_path: str
@@ -123,6 +127,7 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         super().__init__()
         self._sleeper = sleeper
         self._client: Any = None
+        self.last_cursor: str | None = None
 
     @property
     def config(self) -> SourceDropboxFilesSpec:
@@ -150,26 +155,18 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         self, globs: list[str], prefix: str | None, logger: logging.Logger
     ) -> Iterable[RemoteFile]:
         del prefix
-        result = self._call("list", self._list_folder)
-        while True:
-            for entry in result.entries:
-                if not isinstance(entry, FileMetadata):
-                    continue
-                remote_file = self._remote_file(entry)
-                if remote_file.size > self._max_file_size_bytes:
-                    logger.warning(
-                        "Skipping Dropbox file %s because it exceeds the configured size limit.",
-                        remote_file.id,
-                    )
-                    continue
-                if self.file_matches_globs(remote_file, globs):
-                    yield remote_file
-            if not result.has_more:
-                return
-            cursor = result.cursor
-            result = self._call(
-                "list", lambda cursor=cursor: self._client.files_list_folder_continue(cursor)
-            )
+        for entry in self.iter_snapshot_entries():
+            if not isinstance(entry, FileMetadata):
+                continue
+            remote_file = self._remote_file(entry)
+            if remote_file.size > self._max_file_size_bytes:
+                logger.warning(
+                    "Skipping Dropbox file %s because it exceeds the configured size limit.",
+                    remote_file.id,
+                )
+                continue
+            if self.file_matches_globs(remote_file, globs):
+                yield remote_file
 
     def open_file(
         self, file: RemoteFile, mode: FileReadMode, encoding: str | None, logger: logging.Logger
@@ -214,8 +211,37 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         return self._client.files_list_folder(
             self.config.path,
             recursive=self.config.recursive,
-            include_deleted=False,
+            include_deleted=True,
         )
+
+    def iter_snapshot_entries(self) -> Iterable[Any]:
+        result = self._call("list", self._list_folder)
+        while True:
+            yield from result.entries
+            if not result.has_more:
+                self.last_cursor = getattr(result, "cursor", None)
+                return
+            cursor = result.cursor
+            result = self._continue(cursor)
+
+    def iter_delta_entries(self, cursor: str) -> Iterable[Any]:
+        result = self._continue(cursor)
+        while True:
+            yield from result.entries
+            if not result.has_more:
+                self.last_cursor = result.cursor
+                return
+            result = self._continue(result.cursor)
+
+    def _continue(self, cursor: str) -> Any:
+        try:
+            return self._call(
+                "continue", lambda cursor=cursor: self._client.files_list_folder_continue(cursor)
+            )
+        except AirbyteTracedException as exc:
+            if _is_cursor_reset(exc.__cause__):
+                raise DropboxCursorResetError("Dropbox list_folder cursor was reset.") from exc
+            raise
 
     def _remote_file(self, entry: FileMetadata) -> DropboxRemoteFile:
         relative_path = self._relative_path(entry.path_display or entry.name)
@@ -272,6 +298,17 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
                     failure_type=FailureType.system_error,
                 ) from exc
         raise AssertionError("Unreachable Dropbox retry state.")
+
+
+def _is_cursor_reset(value: BaseException | None) -> bool:
+    if not isinstance(value, ApiError):
+        return False
+    error = getattr(value, "error", None)
+    if error is None:
+        return False
+    if hasattr(error, "is_reset") and error.is_reset():
+        return True
+    return "reset" in repr(error).casefold()
 
 
 def _utc_timestamp(value: object) -> str | None:

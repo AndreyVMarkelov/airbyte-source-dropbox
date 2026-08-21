@@ -4,7 +4,7 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from airbyte_cdk.models import ConfiguredAirbyteCatalog
+from airbyte_cdk.models import ConfiguredAirbyteCatalog, Level, Type
 from airbyte_cdk.sources.file_based.file_based_source import (
     FileBasedSource,
     preserve_directory_structure,
@@ -14,9 +14,10 @@ from airbyte_cdk.sources.file_based.stream.default_file_based_stream import Defa
 from airbyte_cdk.sources.file_based.types import StreamSlice
 from airbyte_cdk.sources.utils.record_helper import stream_data_to_airbyte_message
 from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from dropbox.files import DeletedMetadata, FileMetadata
 
 from source_dropbox_files.cursor import DropboxFileVersionCursor, MigrationOperation
-from source_dropbox_files.reader import SourceDropboxFilesStreamReader
+from source_dropbox_files.reader import DropboxCursorResetError, SourceDropboxFilesStreamReader
 from source_dropbox_files.spec import SourceDropboxFilesSpec
 
 
@@ -57,6 +58,29 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
     def compute_slices(self) -> list[StreamSlice]:
         if not isinstance(self.cursor, DropboxFileVersionCursor):
             return list(super().compute_slices())
+        if self.cursor.has_dropbox_cursor:
+            assert self.cursor.dropbox_cursor is not None
+            try:
+                changed_files, deleted_paths = self._delta_changes(self.cursor.dropbox_cursor)
+            except DropboxCursorResetError as exc:
+                raise ValueError(
+                    "Dropbox file-transfer cursor was reset; run a fresh sync with a valid state."
+                ) from exc
+            plan = self.cursor.plan_delta(
+                changed_files,
+                deleted_paths,
+                rename_policy=self.stream_reader.config.rename_policy,
+                delete_policy=self.stream_reader.config.delete_policy,
+                path=self.stream_reader.config.path,
+                recursive=self.stream_reader.config.recursive,
+            )
+            return [
+                {
+                    "operations": plan.operations,
+                    self.FILES_KEY: plan.files,
+                    "dropbox_cursor": self.stream_reader.last_cursor,
+                }
+            ]
         plan = self.cursor.plan_inventory(
             self.list_files(),
             rename_policy=self.stream_reader.config.rename_policy,
@@ -64,7 +88,13 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
             path=self.stream_reader.config.path,
             recursive=self.stream_reader.config.recursive,
         )
-        return [{"operations": plan.operations, self.FILES_KEY: plan.files}]
+        return [
+            {
+                "operations": plan.operations,
+                self.FILES_KEY: plan.files,
+                "dropbox_cursor": self.stream_reader.last_cursor,
+            }
+        ]
 
     def read_records_from_slice(self, stream_slice: StreamSlice):
         operations = stream_slice.get("operations", [])
@@ -77,7 +107,40 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
             else:
                 assert isinstance(self.cursor, DropboxFileVersionCursor)
                 self.cursor.mark_delete(operation)
-        yield from super().read_records_from_slice({self.FILES_KEY: stream_slice[self.FILES_KEY]})
+        saw_error = False
+        for message in super().read_records_from_slice(
+            {self.FILES_KEY: stream_slice[self.FILES_KEY]}
+        ):
+            if _is_error_log(message):
+                saw_error = True
+            yield message
+        if not saw_error:
+            dropbox_cursor = stream_slice.get("dropbox_cursor")
+            if isinstance(dropbox_cursor, str) and dropbox_cursor:
+                assert isinstance(self.cursor, DropboxFileVersionCursor)
+                self.cursor.advance_cursor(dropbox_cursor)
+
+    def _delta_changes(self, cursor: str) -> tuple[list[Any], list[str]]:
+        changed_files = []
+        deleted_paths = []
+        for entry in self.stream_reader.iter_delta_entries(cursor):
+            if isinstance(entry, FileMetadata):
+                remote_file = self.stream_reader._remote_file(entry)  # noqa: SLF001
+                if remote_file.size > self.stream_reader._max_file_size_bytes:  # noqa: SLF001
+                    self.logger.warning(
+                        "Skipping Dropbox file %s because it exceeds the configured size limit.",
+                        remote_file.id,
+                    )
+                    continue
+                if self.stream_reader.file_matches_globs(
+                    remote_file, self.config.globs or []
+                ):
+                    changed_files.append(remote_file)
+            elif isinstance(entry, DeletedMetadata):
+                path = entry.path_display or entry.path_lower
+                if isinstance(path, str) and path:
+                    deleted_paths.append(self.stream_reader._relative_path(path))  # noqa: SLF001
+        return changed_files, deleted_paths
 
 
 class SourceDropboxFiles(FileBasedSource):
@@ -126,3 +189,10 @@ class SourceDropboxFiles(FileBasedSource):
             use_file_transfer=use_file_transfer(parsed_config),
             preserve_directory_structure=preserve_directory_structure(parsed_config),
         )
+
+
+def _is_error_log(message: Any) -> bool:
+    return (
+        getattr(message, "type", None) == Type.LOG
+        and getattr(getattr(message, "log", None), "level", None) == Level.ERROR
+    )

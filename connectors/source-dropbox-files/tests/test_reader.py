@@ -4,9 +4,11 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from airbyte_cdk.utils.traced_exception import AirbyteTracedException
+from dropbox.exceptions import ApiError, InternalServerError, RateLimitError
 from dropbox.files import FileMetadata, FolderMetadata
 
-from source_dropbox_files.reader import SourceDropboxFilesStreamReader
+from source_dropbox_files.reader import DropboxCursorResetError, SourceDropboxFilesStreamReader
 from source_dropbox_files.source import DropboxIncrementalFileTransferStream
 from source_dropbox_files.spec import SourceDropboxFilesSpec
 
@@ -66,8 +68,85 @@ def test_lists_live_files_relative_to_root_and_excludes_folders() -> None:
     assert files[0].client_modified == "2026-01-01T00:00:00Z"
     assert files[0].server_modified == "2026-01-01T00:00:00Z"
     reader._client.files_list_folder.assert_called_once_with(
-        "/Exports", recursive=True, include_deleted=False
+        "/Exports", recursive=True, include_deleted=True
     )
+
+
+def test_snapshot_pagination_captures_final_cursor() -> None:
+    reader = _reader()
+    reader._client.files_list_folder.return_value = SimpleNamespace(
+        entries=[_file("first.pdf")],
+        cursor="cursor-1",
+        has_more=True,
+    )
+    reader._client.files_list_folder_continue.return_value = SimpleNamespace(
+        entries=[_file("second.pdf")],
+        cursor="cursor-2",
+        has_more=False,
+    )
+
+    files = list(reader.get_matching_files(["**"], None, Mock()))
+
+    assert [file.uri for file in files] == ["first.pdf", "second.pdf"]
+    assert reader.last_cursor == "cursor-2"
+    reader._client.files_list_folder_continue.assert_called_once_with("cursor-1")
+
+
+def test_delta_pagination_uses_continue_and_captures_final_cursor() -> None:
+    reader = _reader()
+    reader._client.files_list_folder_continue.side_effect = [
+        SimpleNamespace(entries=[_file("first.pdf")], cursor="cursor-2", has_more=True),
+        SimpleNamespace(entries=[_file("second.pdf")], cursor="cursor-3", has_more=False),
+    ]
+
+    entries = list(reader.iter_delta_entries("cursor-1"))
+
+    assert [entry.name for entry in entries] == ["first.pdf", "second.pdf"]
+    assert reader.last_cursor == "cursor-3"
+    assert [call.args[0] for call in reader._client.files_list_folder_continue.call_args_list] == [
+        "cursor-1",
+        "cursor-2",
+    ]
+    reader._client.files_list_folder.assert_not_called()
+
+
+def test_delta_continue_retries_transient_errors() -> None:
+    reader = _reader()
+    reader._client.files_list_folder_continue.side_effect = [
+        RateLimitError("request-id"),
+        SimpleNamespace(entries=[], cursor="cursor-2", has_more=False),
+    ]
+
+    assert list(reader.iter_delta_entries("cursor-1")) == []
+    assert reader.last_cursor == "cursor-2"
+    reader._sleeper.assert_called_once_with(1)
+
+
+def test_delta_continue_retry_exhaustion_fails_stream() -> None:
+    reader = _reader()
+    reader._client.files_list_folder_continue.side_effect = InternalServerError(
+        "request-id", 500, None
+    )
+
+    with pytest.raises(AirbyteTracedException, match="rate limited or unavailable"):
+        list(reader.iter_delta_entries("cursor-1"))
+
+    assert reader._client.files_list_folder_continue.call_count == 4
+
+
+class _ResetError:
+    def __repr__(self) -> str:
+        return "ListFolderContinueError('reset')"
+
+
+def test_delta_cursor_reset_fails_closed() -> None:
+    reader = _reader()
+    reader._client.files_list_folder_continue.side_effect = ApiError(
+        "request-id", _ResetError(), None, None
+    )
+
+    with pytest.raises(DropboxCursorResetError, match="cursor was reset"):
+        list(reader.iter_delta_entries("cursor-1"))
 
 
 def test_malformed_server_modified_is_omitted_without_blocking_file_transfer() -> None:
