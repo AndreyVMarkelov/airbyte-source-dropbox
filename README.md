@@ -70,6 +70,44 @@ DROPBOX_RECONCILIATION_DESTINATION_CONFIG=/path/destination.json \
 uv run pytest --run-integration tests/reconciliation/integration
 ```
 
+## Shared-link inventory
+
+`shared_links` is a read-only full-refresh snapshot of Dropbox shared links
+visible to the authenticated account. It requires `sharing.read`, uses
+`sharing_list_shared_links`, paginates every page, and never downloads file
+content or mutates sharing state.
+
+The stream primary key remains `link_key`. Dropbox does not expose a durable
+shared-link ID for every SDK link variant, so `link_key` and `link_id` use the
+canonical shared-link URL. Treat shared-link URLs as sensitive data.
+
+Records preserve Dropbox sharing semantics without inferring exposure from the
+URL. Common warehouse fields include `target.type`, `target.id`,
+`target.path_lower`, `visibility`, `access_level`, `settings.effective_visibility`,
+`settings.requested_visibility`, `settings.link_access_level`, `settings.allow_download`,
+and `expires`. File links include file metadata when Dropbox returns it, such as
+`rev`, `client_modified`, `server_modified`, and `size`; folder links keep a
+folder-shaped target instead of file-only fields.
+
+The stream honors the configured Dropbox `path` using case-insensitive
+path-component matching. Links without a safe target path, or whose target is
+outside the configured root, are skipped with a safe warning.
+
+Example warehouse predicates:
+
+```sql
+-- Expiring links.
+select url, target.path_lower, expires
+from shared_links
+where expires is not null;
+
+-- Links Dropbox reports as effectively public and downloadable.
+select url, target.type, target.path_lower
+from shared_links
+where settings.effective_visibility = 'public'
+  and settings.allow_download = true;
+```
+
 ## Targeted repair
 
 `dropbox-repair` consumes a completed reconciliation JSONL report and acts only on `missing` and `mismatched` source records. It streams the source file by stable file ID into an overwrite upload session; `matched`, `extra_destination`, and `error` records are reported as skipped. It never deletes destination-only files.

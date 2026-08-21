@@ -1,14 +1,27 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from dropbox.files import DeletedMetadata, FileMetadata, FolderMetadata, Metadata
-from dropbox.sharing import SharedFolderMetadata, SharedLinkMetadata
+from dropbox.sharing import (
+    FileLinkMetadata,
+    FolderLinkMetadata,
+    SharedFolderMetadata,
+    SharedLinkMetadata,
+)
 
 
 def _isoformat(value: datetime | None) -> str | None:
     return value.isoformat() if value else None
+
+
+def _isoformat_utc(value: object) -> str | None:
+    if not isinstance(value, datetime):
+        return None
+    if value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _metadata_base(entry: Metadata) -> dict[str, Any]:
@@ -82,6 +95,13 @@ def _tag(value: Any) -> str | None:
     return getattr(value, "_tag", None) if value is not None else None
 
 
+def _optional_attr(value: Any, name: str) -> Any:
+    try:
+        return getattr(value, name)
+    except AttributeError:
+        return None
+
+
 def _team(value: Any) -> dict[str, Any] | None:
     if value is None:
         return None
@@ -100,25 +120,68 @@ def _team_member(value: Any) -> dict[str, Any] | None:
 
 def normalize_shared_link(entry: SharedLinkMetadata) -> dict[str, Any]:
     """Normalize shared-link metadata without exposing Dropbox SDK objects."""
-    permissions = entry.link_permissions
+    permissions = _optional_attr(entry, "link_permissions")
+    target_type = _shared_link_target_type(entry)
+    path_lower = _optional_attr(entry, "path_lower")
+    link_access_level = (
+        _tag(_optional_attr(permissions, "link_access_level")) if permissions else None
+    )
+    requested_visibility = (
+        _tag(_optional_attr(permissions, "requested_visibility")) if permissions else None
+    )
+    effective_visibility = (
+        _tag(_optional_attr(permissions, "resolved_visibility")) if permissions else None
+    )
+    allow_download = _optional_attr(permissions, "allow_download") if permissions else None
     return {
         # Dropbox identifies the target, rather than the link itself. The URL is
         # the deterministic identity for an account's shared-link inventory.
         "link_key": entry.url,
+        "link_id": entry.url,
         "url": entry.url,
         "target_id": entry.id,
         "name": entry.name,
-        "path_lower": entry.path_lower,
-        "link_type": type(entry).__name__.removesuffix("LinkMetadata").lower(),
-        "visibility": _tag(permissions.resolved_visibility) if permissions else None,
-        "expires": _isoformat(entry.expires),
-        "allow_download": permissions.allow_download if permissions else None,
-        "effective_audience": _tag(permissions.effective_audience) if permissions else None,
-        "requested_visibility": _tag(permissions.requested_visibility) if permissions else None,
-        "access_level": _tag(permissions.link_access_level) if permissions else None,
-        "team_member_info": _team_member(entry.team_member_info),
-        "content_owner_team_info": _team(entry.content_owner_team_info),
+        "path_lower": path_lower,
+        "path_display": None,
+        "link_type": target_type,
+        "visibility": effective_visibility,
+        "expires": _isoformat_utc(entry.expires),
+        "allow_download": allow_download,
+        "effective_audience": _tag(_optional_attr(permissions, "effective_audience"))
+        if permissions
+        else None,
+        "requested_visibility": requested_visibility,
+        "access_level": link_access_level,
+        "target": {
+            "id": entry.id,
+            "type": target_type,
+            "path_lower": path_lower,
+            "path_display": None,
+        },
+        "settings": {
+            "requested_visibility": requested_visibility,
+            "effective_visibility": effective_visibility,
+            "link_access_level": link_access_level,
+            "allow_download": allow_download,
+        },
+        "client_modified": _isoformat_utc(_optional_attr(entry, "client_modified")),
+        "server_modified": _isoformat_utc(_optional_attr(entry, "server_modified")),
+        "rev": _optional_attr(entry, "rev"),
+        "size": _optional_attr(entry, "size"),
+        "team_member_info": _team_member(_optional_attr(entry, "team_member_info")),
+        "content_owner_team_info": _team(_optional_attr(entry, "content_owner_team_info")),
     }
+
+
+def _shared_link_target_type(entry: SharedLinkMetadata) -> str:
+    if isinstance(entry, FileLinkMetadata):
+        return "file"
+    if isinstance(entry, FolderLinkMetadata):
+        return "folder"
+    class_name = type(entry).__name__.removesuffix("LinkMetadata").lower()
+    if class_name in {"file", "folder"}:
+        return class_name
+    return "other"
 
 
 def normalize_shared_folder(entry: SharedFolderMetadata) -> dict[str, Any]:
