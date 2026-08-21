@@ -100,6 +100,7 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
         "entries",
         "files",
         "folders",
+        "file_properties",
         "shared_links",
         "shared_folders",
         "file_contents",
@@ -110,9 +111,11 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
     assert catalog.streams[1].source_defined_primary_key == [["id"]]
     assert catalog.streams[2].source_defined_primary_key == [["id"]]
     assert catalog.streams[3].supported_sync_modes == [SyncMode.full_refresh]
+    assert catalog.streams[3].source_defined_primary_key == [["property_key"]]
     assert catalog.streams[4].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[5].supported_sync_modes == [SyncMode.full_refresh]
-    assert catalog.streams[5].source_defined_primary_key == [["file_id"]]
+    assert catalog.streams[6].supported_sync_modes == [SyncMode.full_refresh]
+    assert catalog.streams[6].source_defined_primary_key == [["file_id"]]
 
 
 def test_files_filters_metadata_pages_and_preserves_optional_metadata() -> None:

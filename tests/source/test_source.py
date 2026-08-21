@@ -41,6 +41,7 @@ def test_streams_expose_entries_and_snapshots() -> None:
         "entries",
         "files",
         "folders",
+        "file_properties",
         "shared_links",
         "shared_folders",
         "file_contents",
