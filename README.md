@@ -10,7 +10,7 @@ Dropbox connectors for Airbyte, packaged together for shared development and rel
   - `shared_links` and `shared_folders` are sharing snapshots.
   - `file_contents` is opt-in Markdown extraction through Dropbox Riviera.
 - `destination_dropbox` writes validated file records to Dropbox, creating missing parent folders beneath its configured root.
-- `source-dropbox-files` is a separate native Airbyte File Transfer connector for original Dropbox bytes. It requires Airbyte platform 1.7 or newer and carries source `client_modified` plus provenance-only `server_modified` for migration.
+- `source-dropbox-files` is a separate native Airbyte File Transfer connector for original Dropbox bytes. It requires Airbyte platform 1.7 or newer, carries source `client_modified` plus provenance-only `server_modified`, and uses Dropbox list-folder cursors for incremental runs after the initial snapshot.
 - `destination-dropbox-files` consumes native Airbyte file references and streams staged files to Dropbox upload sessions.
 
 ## Source Dropbox authentication
