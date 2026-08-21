@@ -13,6 +13,7 @@ from source_dropbox.streams.files import Files
 from source_dropbox.streams.folders import Folders
 from source_dropbox.streams.shared_folders import SharedFolders
 from source_dropbox.streams.shared_links import SharedLinks
+from source_dropbox.streams.sharing_acl import SharingAcl
 
 
 class SourceDropbox(AbstractSource):
@@ -32,5 +33,6 @@ class SourceDropbox(AbstractSource):
             FileProperties(client, config),
             SharedLinks(client, config),
             SharedFolders(client, config),
+            SharingAcl(client, config),
             FileContents(client, config),
         ]

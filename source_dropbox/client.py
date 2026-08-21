@@ -11,10 +11,12 @@ from dropbox.file_properties import GetTemplateResult, TemplateFilter
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
 from dropbox.riviera import FileIdOrUrl, GetMarkdownAsyncCheckResult
 from dropbox.sharing import (
+    ListFolderMembersContinueError,
     ListFoldersContinueError,
     ListFoldersResult,
     ListSharedLinksError,
     ListSharedLinksResult,
+    SharedFolderMembers,
     SharedFolderMetadata,
     SharedLinkMetadata,
 )
@@ -37,6 +39,14 @@ class SharedLinksPage:
 @dataclass(frozen=True)
 class SharedFoldersPage:
     entries: list[SharedFolderMetadata]
+    cursor: str | None
+
+
+@dataclass(frozen=True)
+class SharedFolderMembersPage:
+    users: list[Any]
+    groups: list[Any]
+    invitees: list[Any]
     cursor: str | None
 
 
@@ -64,6 +74,10 @@ class DropboxCursorResetError(RuntimeError):
 
 class DropboxSharingPermissionError(RuntimeError):
     """Raised when the Dropbox app cannot read sharing metadata."""
+
+
+class DropboxSharingAclError(RuntimeError):
+    """Raised when Dropbox shared-folder ACLs cannot be inventoried safely."""
 
 
 class DropboxSharedLinksCursorResetError(RuntimeError):
@@ -301,6 +315,47 @@ class DropboxClient:
                 else:
                     raise
 
+    def iter_shared_folder_members(
+        self, shared_folder_id: str
+    ) -> Iterator[SharedFolderMembersPage]:
+        """List all user/group/invitee members for one shared folder."""
+        try:
+            result = self._client.sharing_list_folder_members(shared_folder_id)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
+        except RateLimitError as exc:
+            raise DropboxRateLimitError(
+                "Dropbox rate limited shared-folder membership synchronization."
+            ) from exc
+        except ApiError as exc:
+            raise DropboxSharingAclError(
+                f"Dropbox could not list members for shared folder {shared_folder_id}."
+            ) from exc
+
+        while True:
+            page = self._to_shared_folder_members_page(result)
+            yield page
+            if page.cursor is None:
+                break
+            try:
+                result = self._client.sharing_list_folder_members_continue(page.cursor)
+            except (AuthError, BadInputError) as exc:
+                self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
+            except RateLimitError as exc:
+                raise DropboxRateLimitError(
+                    "Dropbox rate limited shared-folder membership synchronization."
+                ) from exc
+            except ApiError as exc:
+                if isinstance(exc.error, ListFolderMembersContinueError):
+                    raise DropboxSharingAclError(
+                        f"Dropbox could not continue listing members for shared folder "
+                        f"{shared_folder_id}."
+                    ) from exc
+                raise DropboxSharingAclError(
+                    f"Dropbox could not continue listing members for shared folder "
+                    f"{shared_folder_id}."
+                ) from exc
+
     def _list_shared_folders(self) -> ListFoldersResult:
         try:
             return self._client.sharing_list_folders()
@@ -520,3 +575,14 @@ class DropboxClient:
     @staticmethod
     def _to_shared_folders_page(result: ListFoldersResult) -> SharedFoldersPage:
         return SharedFoldersPage(entries=list(result.entries), cursor=result.cursor)
+
+    @staticmethod
+    def _to_shared_folder_members_page(
+        result: SharedFolderMembers,
+    ) -> SharedFolderMembersPage:
+        return SharedFolderMembersPage(
+            users=list(result.users or []),
+            groups=list(result.groups or []),
+            invitees=list(result.invitees or []),
+            cursor=result.cursor,
+        )

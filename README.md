@@ -9,6 +9,7 @@ Dropbox connectors for Airbyte, packaged together for shared development and rel
   - `files` and `folders` are current metadata snapshots.
   - `file_properties` exports Dropbox File Properties as one warehouse-friendly record per attached field.
   - `shared_links` and `shared_folders` are sharing snapshots.
+  - `sharing_acl` exports shared-folder membership/access relationships for governance analytics.
   - `file_contents` is opt-in Markdown extraction through Dropbox Riviera.
 - `destination_dropbox` writes validated file records to Dropbox, creating missing parent folders beneath its configured root.
 - `source-dropbox-files` is a separate native Airbyte File Transfer connector for original Dropbox bytes. It requires Airbyte platform 1.7 or newer, carries source `client_modified` plus provenance-only `server_modified`, and uses Dropbox list-folder cursors for incremental runs after the initial snapshot.
@@ -107,6 +108,57 @@ select url, target.type, target.path_lower
 from shared_links
 where settings.effective_visibility = 'public'
   and settings.allow_download = true;
+```
+
+## Sharing / ACL inventory
+
+`sharing_acl` is a read-only full-refresh stream for Dropbox shared-folder
+membership. It requires `sharing.read`, first lists shared folders visible to
+the authenticated account, then lists each in-scope shared folder's members. If
+Dropbox requires one member-list request per shared folder, this stream follows
+that API model; it does not perform content downloads or mutate sharing state.
+
+This v1 stream represents shared-folder access relationships only. It does not
+invent per-file ACLs from folder hierarchy, does not infer public access from
+shared links, and does not recreate permissions on a destination.
+
+The stream emits one record per shared-folder resource/principal permission
+relationship. The primary key is built from stable Dropbox sharing identity:
+
+```text
+shared_folder_id | principal_type | principal identity
+```
+
+Users use Dropbox account IDs when available. Groups use Dropbox group IDs.
+Invitees without a linked Dropbox account use the invitation email as the
+fallback identity because Dropbox does not expose a durable account ID for that
+pending principal. `access_level` is a mutable field and is intentionally not
+part of the primary key, so a permission change updates the same logical
+resource/principal relationship.
+
+`principal_type` can be `user`, `group`, `invitee`, or `other`. `access_level`
+preserves Dropbox access tags such as `owner`, `editor`, `viewer`,
+`viewer_no_comment`, and `traverse`. `is_inherited` is populated only from
+Dropbox membership metadata. `is_external` is populated only when Dropbox
+returns authoritative `same_team` metadata; the connector does not infer
+external access from email domains or names.
+
+The stream honors the configured Dropbox `path` using case-insensitive
+path-component matching when shared-folder metadata includes a safe path. Shared
+folders without a safe path, or outside the configured root, are skipped with a
+safe warning. ACL data is sensitive; avoid logging full stream payloads.
+
+Example warehouse query:
+
+```sql
+select
+  resource_id,
+  path_display,
+  principal_type,
+  principal_email,
+  access_level
+from sharing_acl
+where principal_type = 'user';
 ```
 
 ## File Properties inventory

@@ -144,6 +144,7 @@ def test_live_spec_check_and_discover(core_config: dict[str, object]) -> None:
         "file_properties",
         "shared_links",
         "shared_folders",
+        "sharing_acl",
         "file_contents",
     ]
 

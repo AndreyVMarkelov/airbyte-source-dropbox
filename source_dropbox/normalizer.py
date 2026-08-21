@@ -7,8 +7,11 @@ from dropbox.files import DeletedMetadata, FileMetadata, FolderMetadata, Metadat
 from dropbox.sharing import (
     FileLinkMetadata,
     FolderLinkMetadata,
+    GroupMembershipInfo,
+    InviteeMembershipInfo,
     SharedFolderMetadata,
     SharedLinkMetadata,
+    UserMembershipInfo,
 )
 
 
@@ -248,6 +251,100 @@ def normalize_shared_folder(entry: SharedFolderMetadata) -> dict[str, Any]:
             else None
         ),
     }
+
+
+def normalize_sharing_acl(
+    resource: SharedFolderMetadata,
+    member: Any,
+) -> dict[str, Any]:
+    """Normalize one shared-folder resource/principal membership relationship."""
+    resource_id = resource.shared_folder_id
+    if not isinstance(resource_id, str) or not resource_id:
+        raise ValueError("Dropbox shared-folder ACL record is missing a resource ID.")
+    principal = _sharing_acl_principal(member)
+    access_level = _tag(_optional_attr(member, "access_type"))
+    principal_identity = principal["identity"]
+    return {
+        "acl_key": f"{resource_id}|{principal['type']}|{principal_identity}",
+        "resource_id": resource_id,
+        "resource_type": "shared_folder",
+        "path_lower": resource.path_lower,
+        "path_display": resource.path_display,
+        "principal_type": principal["type"],
+        "principal_id": principal["id"],
+        "principal_email": principal["email"],
+        "principal_display_name": principal["display_name"],
+        "access_level": access_level,
+        "is_inherited": _optional_attr(member, "is_inherited"),
+        "is_external": principal["is_external"],
+    }
+
+
+def _sharing_acl_principal(member: Any) -> dict[str, Any]:
+    if isinstance(member, UserMembershipInfo):
+        user = member.user
+        principal_id = _optional_attr(user, "account_id")
+        email = _optional_attr(user, "email")
+        display_name = _optional_attr(user, "display_name")
+        same_team = _optional_attr(user, "same_team")
+        return {
+            "type": "user",
+            "id": principal_id,
+            "email": email,
+            "display_name": display_name,
+            "is_external": (not same_team) if isinstance(same_team, bool) else None,
+            "identity": _required_principal_identity(principal_id, email, "user"),
+        }
+    if isinstance(member, GroupMembershipInfo):
+        group = member.group
+        principal_id = _optional_attr(group, "group_id")
+        display_name = _optional_attr(group, "group_name")
+        same_team = _optional_attr(group, "same_team")
+        return {
+            "type": "group",
+            "id": principal_id,
+            "email": None,
+            "display_name": display_name,
+            "is_external": (not same_team) if isinstance(same_team, bool) else None,
+            "identity": _required_principal_identity(principal_id, None, "group"),
+        }
+    if isinstance(member, InviteeMembershipInfo):
+        invitee = member.invitee
+        user = _optional_attr(member, "user")
+        email = invitee.get_email() if invitee and invitee.is_email() else None
+        principal_id = _optional_attr(user, "account_id")
+        display_name = _optional_attr(user, "display_name")
+        same_team = _optional_attr(user, "same_team")
+        return {
+            "type": "invitee",
+            "id": principal_id,
+            "email": email,
+            "display_name": display_name,
+            "is_external": (not same_team) if isinstance(same_team, bool) else None,
+            "identity": _required_principal_identity(principal_id, email, "invitee"),
+        }
+    return {
+        "type": "other",
+        "id": None,
+        "email": None,
+        "display_name": None,
+        "is_external": None,
+        "identity": type(member).__name__,
+    }
+
+
+def _required_principal_identity(
+    primary: object,
+    fallback: object,
+    principal_type: str,
+) -> str:
+    if isinstance(primary, str) and primary:
+        return primary
+    if isinstance(fallback, str) and fallback:
+        return fallback
+    raise ValueError(
+        f"Dropbox shared-folder ACL {principal_type} member is missing a stable identity."
+    )
 
 
 def normalize_entry(entry: Metadata) -> dict[str, Any]:

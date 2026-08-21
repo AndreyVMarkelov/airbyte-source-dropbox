@@ -44,6 +44,7 @@ def test_streams_expose_entries_and_snapshots() -> None:
         "file_properties",
         "shared_links",
         "shared_folders",
+        "sharing_acl",
         "file_contents",
     ]
     assert streams[0].supports_incremental is True
