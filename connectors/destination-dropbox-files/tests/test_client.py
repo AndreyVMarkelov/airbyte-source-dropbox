@@ -11,7 +11,11 @@ from destination_dropbox_files.client import (
     DropboxFilesConflictError,
     DropboxFilesWriteError,
 )
-from destination_dropbox_files.validation import PropagationOperation, StagedFile
+from destination_dropbox_files.validation import (
+    PropagationOperation,
+    StagedFile,
+    validate_staged_file,
+)
 
 
 def _client() -> DropboxFilesClient:
@@ -104,6 +108,29 @@ def test_exact_chunk_boundary_finishes_with_empty_payload(tmp_path: Path) -> Non
     assert finish.args[0] == b""
     assert finish.args[1].offset == chunk
     assert finish.args[2].mode.is_overwrite()
+
+
+def test_ignore_policy_uploads_unparseable_source_timestamp_without_committing_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"x")
+    staged = validate_staged_file(
+        staging_file_url=path.as_uri(),
+        relative_path="file.bin",
+        file_size_bytes=1,
+        root_path="",
+        sha256=None,
+        client_modified="not-a-timestamp",
+        metadata_policy="ignore",
+    )
+    client = _client()
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+
+    client.upload_staged_file(staged, "", "overwrite")
+
+    commit = client._client.files_upload_session_finish.call_args.args[2]
+    assert commit.client_modified is None
 
 
 def test_transient_request_retries_then_succeeds() -> None:

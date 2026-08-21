@@ -62,7 +62,7 @@ def test_validates_optional_client_modified_and_accepts_metadata_less_references
     assert ignored.client_modified is None
 
 
-def test_rejects_malformed_client_modified_before_upload(tmp_path: Path) -> None:
+def test_rejects_malformed_client_modified_only_when_preserving(tmp_path: Path) -> None:
     staged = tmp_path / "file.bin"
     staged.write_bytes(b"data")
     with pytest.raises(FileReferenceValidationError, match="client_modified"):
@@ -70,11 +70,11 @@ def test_rejects_malformed_client_modified_before_upload(tmp_path: Path) -> None
             staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
             root_path="", sha256=None, client_modified="not-a-timestamp",
         )
-    with pytest.raises(FileReferenceValidationError, match="client_modified"):
-        validate_staged_file(
-            staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
-            root_path="", sha256=None, client_modified="not-a-timestamp", metadata_policy="ignore",
-        )
+    ignored = validate_staged_file(
+        staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
+        root_path="", sha256=None, client_modified="not-a-timestamp", metadata_policy="ignore",
+    )
+    assert ignored.client_modified is None
 
 
 def test_validates_move_and_delete_control_records() -> None:

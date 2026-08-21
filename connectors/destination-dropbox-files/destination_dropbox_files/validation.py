@@ -72,13 +72,15 @@ def validate_staged_file(
     if actual_size != file_size_bytes:
         raise FileReferenceValidationError("Staged file size does not match file_size_bytes.")
     normalized_hash = sha256 if isinstance(sha256, str) and len(sha256) == 64 else None
-    parsed_client_modified = _parse_client_modified(client_modified)
+    parsed_client_modified = (
+        _parse_client_modified(client_modified) if metadata_policy == "preserve" else None
+    )
     return StagedFile(
         path=local_path,
         destination_path=f"{root_path}/{relative_path}" if root_path else f"/{relative_path}",
         size=actual_size,
         sha256=normalized_hash,
-        client_modified=parsed_client_modified if metadata_policy == "preserve" else None,
+        client_modified=parsed_client_modified,
     )
 
 
