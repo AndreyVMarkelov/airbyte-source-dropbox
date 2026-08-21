@@ -161,6 +161,61 @@ from sharing_acl
 where principal_type = 'user';
 ```
 
+## Riviera file content extraction
+
+`file_contents` is an opt-in Dropbox document extraction stream for Markdown
+content. It uses Dropbox Riviera asynchronous extraction, not local parsers,
+embeddings, chunking, vector storage, or a complete RAG pipeline. Selecting this
+stream requires `files.content.read` in addition to the core metadata scopes.
+
+The stream is disabled until `file_contents.allowed_extensions` is configured.
+The connector-supported Riviera Markdown subset is:
+
+```text
+.binder, .docx, .gsheet, .html, .ods, .paper, .papert, .pdf, .pptx, .xlsx
+```
+
+Matching is case-insensitive. `max_file_size_mb` defaults to 10 and is capped at
+50 MiB; larger files are skipped before extraction. Riviera may still return a
+file-level failure for document-specific limits or unsupported/corrupt content.
+
+`file_contents` supports incremental sync with stream-specific version state
+keyed by stable Dropbox `file_id`. A file is re-extracted only when its Dropbox
+`rev` or `content_hash` changes. A path-only rename/move with unchanged bytes is
+skipped and does not incur another Riviera extraction. Full refresh ignores
+incoming state and extracts all eligible files.
+
+Records preserve Dropbox provenance fields: `file_id`, `rev`, `content_hash`,
+`name`, paths, size, `client_modified`, and `server_modified`. Successful
+records contain `content_format = 'markdown'`, `extraction_status = 'succeeded'`,
+and `markdown`. Permanent document-level Riviera failures emit a record with
+`markdown = null` and stable error fields. Authentication, permission,
+rate-limit exhaustion, malformed API responses, and other infrastructure
+failures fail the stream instead of being converted into document-level results.
+
+Extracted Markdown can contain sensitive document text. Do not log full
+`file_contents` payloads.
+
+Example warehouse queries:
+
+```sql
+select
+  file_id,
+  path_display,
+  markdown
+from file_contents
+where extraction_status = 'succeeded';
+```
+
+```sql
+select
+  error_code,
+  count(*) as documents
+from file_contents
+where extraction_status = 'failed'
+group by error_code;
+```
+
 ## File Properties inventory
 
 `file_properties` is a read-only full-refresh stream for Dropbox File
