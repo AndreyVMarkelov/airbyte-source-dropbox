@@ -14,7 +14,17 @@ from airbyte_cdk.models import (
     Type,
 )
 from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
-from dropbox.sharing import ListFoldersContinueError, ListSharedLinksError
+from dropbox.sharing import (
+    FileLinkMetadata,
+    FolderLinkMetadata,
+    LinkAccessLevel,
+    LinkAudience,
+    LinkPermissions,
+    ListFoldersContinueError,
+    ListSharedLinksError,
+    RequestedVisibility,
+    ResolvedVisibility,
+)
 from jsonschema import Draft7Validator
 
 from source_dropbox.client import (
@@ -32,32 +42,46 @@ from source_dropbox.streams.shared_folders import SharedFolders
 from source_dropbox.streams.shared_links import SharedLinks
 
 CONFIG = {"credentials": {"auth_type": "access_token", "access_token": "test-token"}}
+SCOPED_CONFIG = {**CONFIG, "path": "/Reports"}
 
 
 def _tag(value: str) -> SimpleNamespace:
     return SimpleNamespace(_tag=value)
 
 
-def _link() -> SimpleNamespace:
-    return SimpleNamespace(
+def _permissions() -> LinkPermissions:
+    return LinkPermissions(
+        resolved_visibility=ResolvedVisibility.public,
+        allow_download=True,
+        effective_audience=LinkAudience.public,
+        requested_visibility=RequestedVisibility.public,
+        link_access_level=LinkAccessLevel.viewer,
+    )
+
+
+def _link() -> FileLinkMetadata:
+    return FileLinkMetadata(
         url="https://www.dropbox.com/scl/fi/example/document.txt?rlkey=key",
         id="id:document",
         name="document.txt",
-        path_lower="/document.txt",
+        path_lower="/reports/document.txt",
         expires=datetime(2026, 9, 1, tzinfo=UTC),
-        link_permissions=SimpleNamespace(
-            resolved_visibility=_tag("public"),
-            allow_download=True,
-            effective_audience=_tag("public"),
-            requested_visibility=_tag("public"),
-            link_access_level=_tag("viewer"),
-        ),
-        team_member_info=SimpleNamespace(
-            display_name="Dropbox User",
-            member_id="dbmid:member",
-            team_info=SimpleNamespace(id="dbtid:team", name="Example Team"),
-        ),
-        content_owner_team_info=SimpleNamespace(id="dbtid:owner", name="Owner Team"),
+        link_permissions=_permissions(),
+        client_modified=datetime(2026, 8, 1, tzinfo=UTC),
+        server_modified=datetime(2026, 8, 2, tzinfo=UTC),
+        rev="012345678",
+        size=10,
+    )
+
+
+def _folder_link() -> FolderLinkMetadata:
+    return FolderLinkMetadata(
+        url="https://www.dropbox.com/scl/fo/example/folder?rlkey=key",
+        id="id:folder-target",
+        name="Folder",
+        path_lower="/reports/folder",
+        expires=None,
+        link_permissions=_permissions(),
     )
 
 
@@ -94,19 +118,37 @@ def test_sharing_streams_normalize_paginated_structured_metadata() -> None:
     client = Mock()
     client.iter_shared_links.return_value = [
         SharedLinksPage(links=[_link()], cursor="next", has_more=True),
-        SharedLinksPage(links=[_link()], cursor=None, has_more=False),
+        SharedLinksPage(links=[_folder_link()], cursor=None, has_more=False),
     ]
     client.iter_shared_folders.return_value = [
         SharedFoldersPage(entries=[_folder()], cursor="next"),
         SharedFoldersPage(entries=[_folder()], cursor=None),
     ]
 
-    links = list(SharedLinks(client, CONFIG).read_records(SyncMode.full_refresh))
+    links = list(SharedLinks(client, SCOPED_CONFIG).read_records(SyncMode.full_refresh))
     folders = list(SharedFolders(client, CONFIG).read_records(SyncMode.full_refresh))
 
     assert len(links) == len(folders) == 2
     assert links[0]["link_key"] == links[0]["url"]
-    assert links[0]["team_member_info"]["team_info"]["id"] == "dbtid:team"
+    assert links[0]["link_id"] == links[0]["url"]
+    assert links[0]["link_type"] == "file"
+    assert links[0]["target"] == {
+        "id": "id:document",
+        "type": "file",
+        "path_lower": "/reports/document.txt",
+        "path_display": None,
+    }
+    assert links[0]["settings"] == {
+        "requested_visibility": "public",
+        "effective_visibility": "public",
+        "link_access_level": "viewer",
+        "allow_download": True,
+    }
+    assert links[0]["client_modified"] == "2026-08-01T00:00:00Z"
+    assert links[0]["server_modified"] == "2026-08-02T00:00:00Z"
+    assert links[0]["rev"] == "012345678"
+    assert links[1]["link_type"] == "folder"
+    assert links[1]["target"]["type"] == "folder"
     assert folders[0]["path_lower"] is None
     assert folders[0]["policy"] == {
         "acl_update_policy": "editors",
@@ -121,8 +163,14 @@ def test_sharing_streams_normalize_paginated_structured_metadata() -> None:
 
 def test_sharing_streams_allow_absent_optional_metadata() -> None:
     link = _link()
-    link.expires = link.team_member_info = link.content_owner_team_info = None
-    link.link_permissions = None
+    link = FileLinkMetadata(
+        url=link.url,
+        name=link.name,
+        id=link.id,
+        expires=None,
+        path_lower=link.path_lower,
+        link_permissions=None,
+    )
     folder = _folder()
     folder.owner_team = folder.policy = None
     client = Mock()
@@ -136,7 +184,58 @@ def test_sharing_streams_allow_absent_optional_metadata() -> None:
     assert link_record["expires"] is None
     assert link_record["visibility"] is None
     assert link_record["allow_download"] is None
+    assert link_record["settings"]["allow_download"] is None
+    assert link_record["client_modified"] is None
+    assert link_record["rev"] is None
     assert folder_record["policy"] is None
+
+
+def test_shared_links_filter_to_configured_root_without_prefix_leakage() -> None:
+    outside = FileLinkMetadata(
+        url="https://www.dropbox.com/scl/fi/example/outside.txt?rlkey=key",
+        name="outside.txt",
+        id="id:outside",
+        path_lower="/reports-old/outside.txt",
+        link_permissions=_permissions(),
+    )
+    unknown = FileLinkMetadata(
+        url="https://www.dropbox.com/scl/fi/example/unknown.txt?rlkey=key",
+        name="unknown.txt",
+        id="id:unknown",
+        path_lower=None,
+        link_permissions=_permissions(),
+    )
+    client = Mock()
+    client.iter_shared_links.return_value = [
+        SharedLinksPage(links=[_link(), outside, unknown], cursor=None, has_more=False)
+    ]
+
+    records = list(SharedLinks(client, SCOPED_CONFIG).read_records(SyncMode.full_refresh))
+
+    assert [record["target"]["id"] for record in records] == ["id:document"]
+
+
+def test_shared_links_empty_result() -> None:
+    client = Mock()
+    client.iter_shared_links.return_value = [SharedLinksPage(links=[], cursor=None, has_more=False)]
+
+    assert list(SharedLinks(client, CONFIG).read_records(SyncMode.full_refresh)) == []
+
+
+def test_shared_links_skip_unknown_target_path_even_at_root() -> None:
+    unknown = FileLinkMetadata(
+        url="https://www.dropbox.com/scl/fi/example/unknown.txt?rlkey=key",
+        name="unknown.txt",
+        id="id:unknown",
+        path_lower=None,
+        link_permissions=_permissions(),
+    )
+    client = Mock()
+    client.iter_shared_links.return_value = [
+        SharedLinksPage(links=[unknown], cursor=None, has_more=False)
+    ]
+
+    assert list(SharedLinks(client, CONFIG).read_records(SyncMode.full_refresh)) == []
 
 
 def test_sharing_streams_read_through_source_protocol() -> None:

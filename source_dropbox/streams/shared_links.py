@@ -27,4 +27,23 @@ class SharedLinks(DropboxStream):
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
         for page in self.client.iter_shared_links():
-            yield from (normalize_shared_link(link) for link in page.links)
+            for link in page.links:
+                record = normalize_shared_link(link)
+                target_path = record["target"]["path_lower"]
+                if _in_configured_scope(target_path, self.config.get("path", "")):
+                    yield record
+                else:
+                    self.logger.warning(
+                        "Skipping Dropbox shared link because its target is outside the "
+                        "configured root or has no safe target path."
+                    )
+
+
+def _in_configured_scope(path_lower: object, root: object) -> bool:
+    if not isinstance(path_lower, str) or not path_lower:
+        return False
+    if not isinstance(root, str) or root == "":
+        return True
+    normalized_root = root.rstrip("/").casefold()
+    normalized_path = path_lower.casefold()
+    return normalized_path == normalized_root or normalized_path.startswith(f"{normalized_root}/")
