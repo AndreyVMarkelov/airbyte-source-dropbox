@@ -39,17 +39,26 @@ CONFIG = {
 }
 
 
-def _file(name: str = "report.PDF", size: int = 1024) -> FileMetadata:
+def _file(
+    name: str = "report.PDF",
+    size: int = 1024,
+    *,
+    file_id: str = "id:file",
+    rev: str = "0123456789",
+    content_hash: str = "a" * 64,
+    path_lower: str | None = None,
+    path_display: str | None = None,
+) -> FileMetadata:
     return FileMetadata(
         name=name,
-        id="id:file",
+        id=file_id,
         client_modified=datetime(2026, 8, 1, tzinfo=UTC),
-        server_modified=datetime(2026, 8, 1, tzinfo=UTC),
-        rev="0123456789",
+        server_modified=datetime(2026, 8, 1, 1, tzinfo=UTC),
+        rev=rev,
         size=size,
-        path_lower=f"/configured/{name.lower()}",
-        path_display=f"/configured/{name}",
-        content_hash="a" * 64,
+        path_lower=path_lower if path_lower is not None else f"/configured/{name.lower()}",
+        path_display=path_display if path_display is not None else f"/configured/{name}",
+        content_hash=content_hash,
         is_downloadable=True,
     )
 
@@ -74,10 +83,12 @@ def test_file_contents_filters_extensions_and_size_boundaries() -> None:
     ]
     client.extract_markdown.return_value = MarkdownExtraction("# Report", "succeeded")
 
-    records = list(FileContents(client, CONFIG).read_records(SyncMode.full_refresh))
+    records = _consume_file_contents(FileContents(client, CONFIG), SyncMode.full_refresh)
 
     assert [record["name"] for record in records] == ["report.PDF"]
     assert records[0]["content_format"] == "markdown"
+    assert records[0]["client_modified"] == "2026-08-01T00:00:00Z"
+    assert records[0]["server_modified"] == "2026-08-01T01:00:00Z"
     client.extract_markdown.assert_called_once_with("id:file", 10)
     client.iter_entries.assert_called_once_with(
         path="/configured", recursive=False, include_deleted=False
@@ -89,7 +100,7 @@ def test_file_contents_requires_allow_list_only_when_selected() -> None:
     client = Mock()
     config = {**CONFIG, "file_contents": {"allowed_extensions": []}}
     with pytest.raises(ValueError, match="allowed_extensions"):
-        list(FileContents(client, config).read_records(SyncMode.full_refresh))
+        list(FileContents(client, config).stream_slices(sync_mode=SyncMode.full_refresh))
 
 
 def test_file_contents_emits_file_level_error_record() -> None:
@@ -105,7 +116,7 @@ def test_file_contents_emits_file_level_error_record() -> None:
         error_details={"type": "unsupported_format_error"},
         error_message="Riviera extraction failed: unsupported_format_error.",
     )
-    record = list(FileContents(client, CONFIG).read_records(SyncMode.full_refresh))[0]
+    record = _consume_file_contents(FileContents(client, CONFIG), SyncMode.full_refresh)[0]
     assert record["markdown"] is None
     assert record["error_details"] == {"type": "unsupported_format_error"}
     assert list(Draft7Validator(_schema()).iter_errors(record)) == []
@@ -143,6 +154,8 @@ def test_file_contents_reads_through_source_protocol() -> None:
             "path_lower": "/configured/report.pdf",
             "path_display": "/configured/report.PDF",
             "size": 1024,
+            "client_modified": "2026-08-01T00:00:00Z",
+            "server_modified": "2026-08-01T01:00:00Z",
             "content_format": "markdown",
             "markdown": "# Report",
             "extraction_status": "succeeded",
@@ -152,6 +165,228 @@ def test_file_contents_reads_through_source_protocol() -> None:
             "error_message": None,
         }
     ]
+
+
+def _consume_file_contents(stream: FileContents, sync_mode: SyncMode) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    for stream_slice in stream.stream_slices(sync_mode=sync_mode):
+        records.extend(
+            stream.read_records(sync_mode=sync_mode, stream_slice=stream_slice)
+        )
+    return records
+
+
+def test_file_contents_incremental_first_run_extracts_and_updates_state() -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(entries=[_file()], cursor="page", has_more=False)
+    ]
+    client.extract_markdown.return_value = MarkdownExtraction("# Report", "succeeded")
+    stream = FileContents(client, CONFIG)
+
+    records = _consume_file_contents(stream, SyncMode.incremental)
+
+    assert [record["file_id"] for record in records] == ["id:file"]
+    client.extract_markdown.assert_called_once_with("id:file", 10)
+    assert stream.state == {
+        "version": 1,
+        "files": {
+            "id:file": {
+                "rev": "0123456789",
+                "content_hash": "a" * 64,
+                "path": "/configured/report.pdf",
+            }
+        },
+    }
+
+
+def test_file_contents_incremental_skips_unchanged_and_rename_only_files() -> None:
+    client = Mock()
+    renamed = _file(path_lower="/configured/renamed.pdf", path_display="/configured/renamed.PDF")
+    client.iter_entries.return_value = [
+        DropboxPage(entries=[renamed], cursor="page", has_more=False)
+    ]
+    stream = FileContents(client, CONFIG)
+    stream.state = {
+        "version": 1,
+        "files": {
+            "id:file": {
+                "rev": "0123456789",
+                "content_hash": "a" * 64,
+                "path": "/configured/report.pdf",
+            }
+        },
+    }
+
+    assert _consume_file_contents(stream, SyncMode.incremental) == []
+    client.extract_markdown.assert_not_called()
+    assert stream.state["files"]["id:file"]["path"] == "/configured/report.pdf"
+
+
+@pytest.mark.parametrize(
+    ("rev", "content_hash"),
+    [("1234567890", "a" * 64), ("0123456789", "b" * 64)],
+)
+def test_file_contents_incremental_extracts_changed_bytes(
+    rev: str, content_hash: str
+) -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(
+            entries=[_file(rev=rev, content_hash=content_hash)],
+            cursor="page",
+            has_more=False,
+        )
+    ]
+    client.extract_markdown.return_value = MarkdownExtraction("# Updated", "succeeded")
+    stream = FileContents(client, CONFIG)
+    stream.state = {
+        "version": 1,
+        "files": {
+            "id:file": {
+                "rev": "0123456789",
+                "content_hash": "a" * 64,
+                "path": "/configured/report.pdf",
+            }
+        },
+    }
+
+    records = _consume_file_contents(stream, SyncMode.incremental)
+
+    assert records[0]["markdown"] == "# Updated"
+    assert stream.state["files"]["id:file"] == {
+        "rev": rev,
+        "content_hash": content_hash,
+        "path": "/configured/report.pdf",
+    }
+
+
+def test_file_contents_incremental_extracts_new_file() -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(
+            entries=[_file(file_id="id:new", path_lower="/configured/new.pdf")],
+            cursor="page",
+            has_more=False,
+        )
+    ]
+    client.extract_markdown.return_value = MarkdownExtraction("# New", "succeeded")
+    stream = FileContents(client, CONFIG)
+
+    records = _consume_file_contents(stream, SyncMode.incremental)
+
+    assert records[0]["file_id"] == "id:new"
+    assert "id:new" in stream.state["files"]
+
+
+def test_file_contents_full_refresh_ignores_existing_state() -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(entries=[_file()], cursor="page", has_more=False)
+    ]
+    client.extract_markdown.return_value = MarkdownExtraction("# Report", "succeeded")
+    stream = FileContents(client, CONFIG)
+    stream.state = {
+        "version": 1,
+        "files": {
+            "id:file": {
+                "rev": "0123456789",
+                "content_hash": "a" * 64,
+                "path": "/configured/report.pdf",
+            }
+        },
+    }
+
+    assert len(_consume_file_contents(stream, SyncMode.full_refresh)) == 1
+    client.extract_markdown.assert_called_once()
+
+
+def test_file_contents_failure_record_advances_state_but_infrastructure_failure_does_not() -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(entries=[_file()], cursor="page", has_more=False)
+    ]
+    client.extract_markdown.return_value = MarkdownExtraction(
+        markdown=None,
+        extraction_status="failed",
+        error_type="unsupported_format_error",
+        error_code="bad_request",
+        error_details={"type": "unsupported_format_error"},
+        error_message="Riviera extraction failed: unsupported_format_error.",
+    )
+    stream = FileContents(client, CONFIG)
+
+    records = _consume_file_contents(stream, SyncMode.incremental)
+
+    assert records[0]["extraction_status"] == "failed"
+    assert "id:file" in stream.state["files"]
+
+    failing_client = Mock()
+    failing_client.iter_entries.return_value = [
+        DropboxPage(entries=[_file()], cursor="page", has_more=False)
+    ]
+    failing_client.extract_markdown.side_effect = RuntimeError("temporary Riviera outage")
+    failing_stream = FileContents(failing_client, CONFIG)
+
+    with pytest.raises(RuntimeError, match="temporary Riviera outage"):
+        _consume_file_contents(failing_stream, SyncMode.incremental)
+    assert failing_stream.state == {"version": 1, "files": {}}
+
+
+def test_file_contents_timeout_record_does_not_advance_state_and_retries_next_run() -> None:
+    client = Mock()
+    client.iter_entries.return_value = [
+        DropboxPage(entries=[_file()], cursor="page", has_more=False)
+    ]
+    client.extract_markdown.return_value = MarkdownExtraction(
+        markdown=None,
+        extraction_status="timed_out",
+        error_type="timeout",
+        error_message="Riviera extraction exceeded 10 seconds.",
+    )
+    stream = FileContents(client, CONFIG)
+
+    records = _consume_file_contents(stream, SyncMode.incremental)
+
+    assert records[0]["extraction_status"] == "timed_out"
+    assert stream.state == {"version": 1, "files": {}}
+
+    retry_client = Mock()
+    retry_client.iter_entries.return_value = [
+        DropboxPage(entries=[_file()], cursor="page", has_more=False)
+    ]
+    retry_client.extract_markdown.return_value = MarkdownExtraction("# Retry", "succeeded")
+    retry_stream = FileContents(retry_client, CONFIG)
+    retry_stream.state = stream.state
+
+    retry_records = _consume_file_contents(retry_stream, SyncMode.incremental)
+
+    assert retry_records[0]["markdown"] == "# Retry"
+    retry_client.extract_markdown.assert_called_once_with("id:file", 10)
+
+
+def test_file_contents_state_validation_and_deterministic_serialization() -> None:
+    stream = FileContents(Mock(), CONFIG)
+    stream.state = {
+        "version": 1,
+        "files": {
+            "id:z": {"rev": "z", "content_hash": "z", "path": None},
+            "id:a": {"rev": "a", "content_hash": "a", "path": "/a.pdf"},
+        },
+    }
+
+    assert list(stream.state["files"]) == ["id:a", "id:z"]
+
+    for bad_state in [
+        {"version": 2, "files": {}},
+        {"version": 1, "files": []},
+        {"version": 1, "files": {"": {"rev": "r", "content_hash": "h"}}},
+        {"version": 1, "files": {"id:file": {"content_hash": "h"}}},
+        {"version": 1, "files": {"id:file": {"rev": "r"}}},
+        {"version": 1, "files": {"id:file": {"rev": "r", "content_hash": "h", "path": 1}}},
+    ]:
+        with pytest.raises(ValueError, match="file_contents state"):
+            stream.state = bad_state
 
 
 def _riviera_client(clock: Mock, sleeper: Mock) -> tuple[DropboxClient, Mock]:

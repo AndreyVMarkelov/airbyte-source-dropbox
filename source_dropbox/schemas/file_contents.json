@@ -11,6 +11,8 @@
     "path_lower": {"type": ["null", "string"]},
     "path_display": {"type": ["null", "string"]},
     "size": {"type": "integer"},
+    "client_modified": {"type": ["null", "string"], "format": "date-time"},
+    "server_modified": {"type": ["null", "string"], "format": "date-time"},
     "content_format": {"type": "string", "const": "markdown"},
     "markdown": {"type": ["null", "string"]},
     "extraction_status": {"type": "string", "enum": ["succeeded", "failed", "timed_out"]},

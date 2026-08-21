@@ -117,8 +117,9 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
     assert catalog.streams[5].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[6].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[6].source_defined_primary_key == [["acl_key"]]
-    assert catalog.streams[7].supported_sync_modes == [SyncMode.full_refresh]
+    assert catalog.streams[7].supported_sync_modes == [SyncMode.full_refresh, SyncMode.incremental]
     assert catalog.streams[7].source_defined_primary_key == [["file_id"]]
+    assert catalog.streams[7].default_cursor_field == []
 
 
 def test_files_filters_metadata_pages_and_preserves_optional_metadata() -> None:
