@@ -91,6 +91,42 @@ def normalize_folder(entry: FolderMetadata) -> dict[str, Any]:
     }
 
 
+def normalize_file_property(
+    entry: FileMetadata,
+    property_group: Any,
+    field: Any,
+    *,
+    template_name: str | None,
+) -> dict[str, Any]:
+    """Normalize one Dropbox File Properties field attached to a file."""
+    template_id = getattr(property_group, "template_id", None)
+    field_name = getattr(field, "name", None)
+    field_value = getattr(field, "value", None)
+    if not isinstance(entry.id, str) or not entry.id:
+        raise ValueError("Dropbox file property record is missing a file ID.")
+    if not isinstance(template_id, str) or not template_id:
+        raise ValueError("Dropbox file property record is missing a template ID.")
+    if not isinstance(field_name, str) or not field_name:
+        raise ValueError("Dropbox file property record is missing a field name.")
+    if field_value is not None and not isinstance(field_value, str):
+        raise ValueError("Dropbox file property record has a non-string field value.")
+
+    field_id = None
+    field_identity = field_id or field_name
+    return {
+        "property_key": f"{entry.id}|{template_id}|{field_identity}",
+        "file_id": entry.id,
+        "file_name": entry.name,
+        "path_lower": entry.path_lower,
+        "path_display": entry.path_display,
+        "template_id": template_id,
+        "template_name": template_name,
+        "field_id": field_id,
+        "field_name": field_name,
+        "field_value": field_value,
+    }
+
+
 def _tag(value: Any) -> str | None:
     return getattr(value, "_tag", None) if value is not None else None
 

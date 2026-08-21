@@ -7,6 +7,7 @@ Dropbox connectors for Airbyte, packaged together for shared development and rel
 - `source_dropbox` provides Dropbox metadata, change, sharing, and optional Markdown-extraction streams:
   - `entries` is the canonical incremental change stream for files, folders, and deletions.
   - `files` and `folders` are current metadata snapshots.
+  - `file_properties` exports Dropbox File Properties as one warehouse-friendly record per attached field.
   - `shared_links` and `shared_folders` are sharing snapshots.
   - `file_contents` is opt-in Markdown extraction through Dropbox Riviera.
 - `destination_dropbox` writes validated file records to Dropbox, creating missing parent folders beneath its configured root.
@@ -107,6 +108,63 @@ from shared_links
 where settings.effective_visibility = 'public'
   and settings.allow_download = true;
 ```
+
+## File Properties inventory
+
+`file_properties` is a read-only full-refresh stream for Dropbox File
+Properties attached to files. It requires the core `files.metadata.read` scope,
+uses a property-aware Dropbox metadata listing, respects the configured `path`
+and `recursive` settings, and never downloads file content or mutates templates
+or properties.
+
+Dropbox File Properties are app-scoped. Dropbox exposes property templates and
+their associated properties only to the app that created those templates. This
+stream inventories File Properties visible to the configured Dropbox app; it
+does not expose arbitrary File Properties created by other Dropbox apps.
+
+The stream emits one record per property field attached to a file. Its primary
+key is:
+
+```text
+file_id | template_id | field identity
+```
+
+Dropbox's current SDK exposes field names rather than stable field IDs, so
+`field_id` is nullable and `field_name` is part of the identity. Because the
+primary key uses `file_id`, the same property keeps its identity across file
+renames. If Dropbox returns duplicate property keys, identical records are
+deduplicated and conflicting duplicates fail the sync rather than selecting an
+arbitrary property value.
+
+Template names are cached by `template_id` for the duration of the sync.
+`template_name`, `field_id`, paths, and field values can be null depending on
+the Dropbox response. Property values may contain sensitive business metadata;
+avoid writing full stream payloads to logs.
+
+Example warehouse queries:
+
+```sql
+select
+  file_id,
+  path_display,
+  template_name,
+  field_name,
+  field_value
+from file_properties
+where template_name = 'Contract';
+```
+
+```sql
+select
+  field_value as customer,
+  count(distinct file_id) as documents
+from file_properties
+where field_name = 'Customer'
+group by field_value;
+```
+
+This stream is analytics-only. It does not recreate File Properties on a
+Dropbox destination.
 
 ## Targeted repair
 

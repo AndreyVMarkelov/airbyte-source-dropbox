@@ -7,6 +7,7 @@ from typing import Any
 
 import dropbox
 from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
+from dropbox.file_properties import GetTemplateResult, TemplateFilter
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
 from dropbox.riviera import FileIdOrUrl, GetMarkdownAsyncCheckResult
 from dropbox.sharing import (
@@ -81,6 +82,10 @@ class DropboxExtractionInfrastructureError(RuntimeError):
     """Raised for Riviera failures that should stop the whole sync."""
 
 
+class DropboxFilePropertiesError(RuntimeError):
+    """Raised when Dropbox File Properties cannot be listed safely."""
+
+
 class DropboxClient:
     def __init__(
         self,
@@ -134,6 +139,27 @@ class DropboxClient:
             raise DropboxRateLimitError("Dropbox rate limited folder synchronization.") from exc
         return self._to_page(result)
 
+    def list_folder_with_property_groups(self, path: str, recursive: bool) -> DropboxPage:
+        """List live folder entries with all attached Dropbox File Properties."""
+        try:
+            result = self._client.files_list_folder(
+                path=path,
+                recursive=recursive,
+                include_deleted=False,
+                include_property_groups=TemplateFilter.filter_none,
+            )
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
+        except RateLimitError as exc:
+            raise DropboxRateLimitError(
+                "Dropbox rate limited file-property synchronization."
+            ) from exc
+        except ApiError as exc:
+            raise DropboxFilePropertiesError(
+                "Dropbox could not list files with File Properties."
+            ) from exc
+        return self._to_page(result)
+
     def list_folder_continue(self, cursor: str) -> DropboxPage:
         try:
             result = self._client.files_list_folder_continue(cursor)
@@ -181,6 +207,33 @@ class DropboxClient:
                 # configured root may replay records, but cannot skip records.
                 page = self.list_folder(path, recursive, include_deleted)
                 reset_recovered = True
+
+    def iter_entries_with_property_groups(
+        self,
+        *,
+        path: str,
+        recursive: bool,
+    ) -> Iterator[DropboxPage]:
+        page = self.list_folder_with_property_groups(path, recursive)
+        while True:
+            yield page
+            if not page.has_more:
+                break
+            page = self.list_folder_continue(page.cursor)
+
+    def get_property_template(self, template_id: str) -> GetTemplateResult | None:
+        try:
+            return self._client.file_properties_templates_get_for_user(template_id)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
+        except RateLimitError as exc:
+            raise DropboxRateLimitError(
+                "Dropbox rate limited file-property template synchronization."
+            ) from exc
+        except ApiError:
+            # Property values remain valid even when the human-readable template
+            # schema is unavailable. The stream emits a null template_name.
+            return None
 
     def iter_shared_links(self) -> Iterator[SharedLinksPage]:
         """List the authenticated account's shared-link inventory."""
