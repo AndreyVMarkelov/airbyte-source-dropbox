@@ -7,6 +7,7 @@ from airbyte_cdk.sources.file_based.config.unstructured_format import Unstructur
 from dropbox.files import DeletedMetadata, FileMetadata
 
 from source_dropbox_files.cursor import DropboxFileVersionCursor, MigrationOperation
+from source_dropbox_files.reader import DropboxCursorResetError
 from source_dropbox_files.source import DropboxIncrementalFileTransferStream
 
 
@@ -23,6 +24,13 @@ def _file(
     content_hash: str = "hash-1",
 ) -> SimpleNamespace:
     return SimpleNamespace(id=file_id, uri=path, rev=rev, content_hash=content_hash, size=1)
+
+
+def _stream(cursor: DropboxFileVersionCursor) -> DropboxIncrementalFileTransferStream:
+    stream = DropboxIncrementalFileTransferStream.__new__(DropboxIncrementalFileTransferStream)
+    stream.config = FileBasedStreamConfig(name="raw_files", format=UnstructuredFormat())
+    stream._cursor = cursor
+    return stream
 
 
 def test_initial_run_transfers_all_files_and_serializes_deterministic_state() -> None:
@@ -675,6 +683,172 @@ def test_compute_slices_uses_delta_cursor_for_move_and_delete() -> None:
         },
     ]
     assert slices[0]["files"] == []
+
+
+def test_cursor_reset_falls_back_to_full_rescan_and_stores_new_cursor_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 3,
+            "scope": {"path": "/Exports", "recursive": True},
+            "cursor": "old-cursor",
+            "files": {
+                "id:file": {"path": "report.pdf", "rev": "rev-1", "content_hash": "hash-1"}
+            },
+        }
+    )
+    changed = _file(path="report.pdf", rev="rev-2", content_hash="hash-2")
+    stream = _stream(cursor)
+    stream.stream_reader = SimpleNamespace(
+        config=SimpleNamespace(
+            rename_policy="ignore",
+            delete_policy="ignore",
+            path="/Exports",
+            recursive=True,
+        ),
+        last_cursor="new-cursor",
+        snapshot_files=lambda _globs, *, logger: ([changed], [changed]),
+    )
+    stream._delta_changes = lambda _cursor: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        DropboxCursorResetError("reset")
+    )
+
+    slices = stream.compute_slices()
+
+    assert slices == [
+        {"operations": [], "files": [changed], "dropbox_cursor": "new-cursor"}
+    ]
+    assert cursor.get_state()["cursor"] == "old-cursor"
+    monkeypatch.setattr(
+        "source_dropbox_files.source.DefaultFileBasedStream.read_records_from_slice",
+        lambda *_args: iter(()),
+    )
+    list(
+        stream.read_records_from_slice(
+            {"operations": [], "files": [], "dropbox_cursor": "new-cursor"}
+        )
+    )
+    assert cursor.get_state()["cursor"] == "new-cursor"
+
+
+def test_cursor_reset_rescan_failure_keeps_old_cursor() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 3,
+            "scope": {"path": "/Exports", "recursive": True},
+            "cursor": "old-cursor",
+            "files": {},
+        }
+    )
+    stream = _stream(cursor)
+    stream.stream_reader = SimpleNamespace(
+        config=SimpleNamespace(
+            rename_policy="ignore",
+            delete_policy="ignore",
+            path="/Exports",
+            recursive=True,
+        ),
+        snapshot_files=lambda _globs, *, logger: (_ for _ in ()).throw(
+            RuntimeError("rescan failed")
+        ),
+    )
+    stream._delta_changes = lambda _cursor: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        DropboxCursorResetError("reset")
+    )
+
+    with pytest.raises(RuntimeError, match="rescan failed"):
+        stream.compute_slices()
+
+    assert cursor.get_state()["cursor"] == "old-cursor"
+
+
+def test_cursor_reset_rescan_derives_rename_and_delete_from_complete_snapshot() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 3,
+            "scope": {"path": "/Exports", "recursive": True},
+            "cursor": "old-cursor",
+            "files": {
+                "id:renamed": {"path": "old.pdf", "rev": "r1", "content_hash": "h1"},
+                "id:deleted": {"path": "gone.pdf", "rev": "r1", "content_hash": "h2"},
+            },
+        }
+    )
+    renamed = _file(file_id="id:renamed", path="new.pdf", rev="r1", content_hash="h1")
+    stream = _stream(cursor)
+    stream.stream_reader = SimpleNamespace(
+        config=SimpleNamespace(
+            rename_policy="propagate",
+            delete_policy="delete",
+            path="/Exports",
+            recursive=True,
+        ),
+        last_cursor="new-cursor",
+        snapshot_files=lambda _globs, *, logger: ([renamed], [renamed]),
+    )
+    stream._delta_changes = lambda _cursor: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        DropboxCursorResetError("reset")
+    )
+
+    slices = stream.compute_slices()
+
+    assert slices[0]["dropbox_cursor"] == "new-cursor"
+    assert [operation.record() for operation in slices[0]["operations"]] == [
+        {
+            "operation": "move",
+            "file_id": "id:renamed",
+            "old_path": "old.pdf",
+            "old_content_hash": "h1",
+            "new_path": "new.pdf",
+            "new_content_hash": "h1",
+        },
+        {
+            "operation": "delete",
+            "file_id": "id:deleted",
+            "old_path": "gone.pdf",
+            "old_content_hash": "h2",
+        },
+    ]
+
+
+def test_cursor_reset_rescan_does_not_delete_tracked_oversized_file() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 3,
+            "scope": {"path": "/Exports", "recursive": True},
+            "cursor": "old-cursor",
+            "files": {
+                "id:large": {"path": "large.bin", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+    large = _file(file_id="id:large", path="large.bin", rev="r2", content_hash="h2")
+    stream = _stream(cursor)
+    stream.stream_reader = SimpleNamespace(
+        config=SimpleNamespace(
+            rename_policy="ignore",
+            delete_policy="delete",
+            path="/Exports",
+            recursive=True,
+        ),
+        last_cursor="new-cursor",
+        snapshot_files=lambda _globs, *, logger: ([large], []),
+    )
+    stream._delta_changes = lambda _cursor: (_ for _ in ()).throw(  # type: ignore[method-assign]
+        DropboxCursorResetError("reset")
+    )
+
+    slices = stream.compute_slices()
+
+    assert slices == [
+        {"operations": [], "files": [], "dropbox_cursor": "new-cursor"}
+    ]
+    assert cursor.get_state()["files"]["id:large"]["path"] == "large.bin"
 
 
 def test_scope_mismatch_fails_before_delete_controls_are_planned() -> None:

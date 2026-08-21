@@ -155,18 +155,36 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         self, globs: list[str], prefix: str | None, logger: logging.Logger
     ) -> Iterable[RemoteFile]:
         del prefix
+        yield from self.snapshot_files(globs, logger=logger)[1]
+
+    def snapshot_files(
+        self, globs: list[str], *, logger: logging.Logger
+    ) -> tuple[list[RemoteFile], list[RemoteFile]]:
+        all_files: list[RemoteFile] = []
+        transfer_files: list[RemoteFile] = []
         for entry in self.iter_snapshot_entries():
             if not isinstance(entry, FileMetadata):
                 continue
             remote_file = self._remote_file(entry)
+            if not self.file_matches_globs(remote_file, globs):
+                continue
+            all_files.append(remote_file)
             if remote_file.size > self._max_file_size_bytes:
                 logger.warning(
                     "Skipping Dropbox file %s because it exceeds the configured size limit.",
                     remote_file.id,
                 )
                 continue
-            if self.file_matches_globs(remote_file, globs):
-                yield remote_file
+            transfer_files.append(remote_file)
+        return all_files, transfer_files
+
+    def ineligible_transfer_ids(self, all_files: Iterable[RemoteFile]) -> set[str]:
+        return {
+            remote_file.id
+            for remote_file in all_files
+            if isinstance(remote_file, DropboxRemoteFile)
+            and remote_file.size > self._max_file_size_bytes
+        }
 
     def open_file(
         self, file: RemoteFile, mode: FileReadMode, encoding: str | None, logger: logging.Logger

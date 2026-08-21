@@ -39,8 +39,10 @@ policies set to `ignore` once; that run performs a safe fresh inventory and
 emits scoped cursor state. Version-2 scoped state without a Dropbox cursor is
 also upgraded by one fresh inventory. Rename or deletion propagation intentionally
 fails closed for legacy unscoped state until a scoped checkpoint exists. If
-Dropbox resets an existing cursor, the connector fails closed instead of
-guessing a destructive replay plan.
+Dropbox resets an existing cursor, the connector performs a complete rescan,
+reuses the normal snapshot planner, obtains a new cursor, and only makes that
+cursor durable through the same destination state gate after all resulting
+uploads, moves, and deletes succeed.
 
 `rename_policy` and `delete_policy` both default to `ignore`. Set
 `rename_policy` to `propagate` to move unchanged files at the destination
@@ -52,7 +54,9 @@ policy overwrites an unrelated destination file.
 Files above `file_transfer.max_file_size_mb` are skipped before download. Because
 Dropbox cursor state may still advance after the page is processed, increasing
 the size limit later does not by itself replay that unchanged oversized file; run
-a fresh sync or cause a new Dropbox change event if you need to pick it up.
+a fresh sync or cause a new Dropbox change event if you need to pick it up. Cursor
+recovery still uses all live file metadata for presence checks, so an oversized
+file that still exists is not treated as a deletion candidate.
 
 Dropbox scopes:
 

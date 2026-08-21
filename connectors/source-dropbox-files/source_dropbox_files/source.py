@@ -62,10 +62,11 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
             assert self.cursor.dropbox_cursor is not None
             try:
                 changed_files, deleted_paths = self._delta_changes(self.cursor.dropbox_cursor)
-            except DropboxCursorResetError as exc:
-                raise ValueError(
-                    "Dropbox file-transfer cursor was reset; run a fresh sync with a valid state."
-                ) from exc
+            except DropboxCursorResetError:
+                self.logger.warning(
+                    "Dropbox file-transfer cursor was reset; falling back to a full rescan."
+                )
+                return [self._snapshot_slice()]
             plan = self.cursor.plan_delta(
                 changed_files,
                 deleted_paths,
@@ -81,20 +82,29 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
                     "dropbox_cursor": self.stream_reader.last_cursor,
                 }
             ]
+        return [self._snapshot_slice()]
+
+    def _snapshot_slice(self) -> StreamSlice:
+        assert isinstance(self.cursor, DropboxFileVersionCursor)
+        all_files, transfer_files = self.stream_reader.snapshot_files(
+            self.config.globs or [], logger=self.logger
+        )
+        transfer_file_ids = {getattr(file, "id", None) for file in transfer_files}
         plan = self.cursor.plan_inventory(
-            self.list_files(),
+            all_files,
             rename_policy=self.stream_reader.config.rename_policy,
             delete_policy=self.stream_reader.config.delete_policy,
             path=self.stream_reader.config.path,
             recursive=self.stream_reader.config.recursive,
         )
-        return [
-            {
-                "operations": plan.operations,
-                self.FILES_KEY: plan.files,
-                "dropbox_cursor": self.stream_reader.last_cursor,
-            }
+        files = [
+            file for file in plan.files if getattr(file, "id", None) in transfer_file_ids
         ]
+        return {
+            "operations": plan.operations,
+            self.FILES_KEY: files,
+            "dropbox_cursor": self.stream_reader.last_cursor,
+        }
 
     def read_records_from_slice(self, stream_slice: StreamSlice):
         operations = stream_slice.get("operations", [])
