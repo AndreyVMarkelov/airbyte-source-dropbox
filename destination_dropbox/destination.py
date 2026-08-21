@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from airbyte_cdk.destinations import Destination
@@ -22,6 +23,7 @@ from destination_dropbox.client import (
 from destination_dropbox.validation import (
     RecordValidationError,
     normalize_conflict_policy,
+    normalize_metadata_policy,
     normalize_root_path,
     normalize_upload_settings,
     validate_record,
@@ -35,6 +37,7 @@ class DestinationDropbox(Destination):
         try:
             normalize_root_path(config.get("root_path", ""))
             normalize_conflict_policy(config.get("conflict_policy", "overwrite"))
+            normalize_metadata_policy(config.get("metadata_policy", "preserve"))
             normalize_upload_settings(config)
             client = DropboxClient(config)
             client.current_account()
@@ -53,6 +56,7 @@ class DestinationDropbox(Destination):
     ) -> Iterable[AirbyteMessage]:
         root_path = normalize_root_path(config.get("root_path", ""))
         conflict_policy = normalize_conflict_policy(config.get("conflict_policy", "overwrite"))
+        metadata_policy = normalize_metadata_policy(config.get("metadata_policy", "preserve"))
         upload_settings = normalize_upload_settings(config)
         configured_streams = {stream.stream.name for stream in configured_catalog.streams}
         record_index = 0
@@ -82,6 +86,8 @@ class DestinationDropbox(Destination):
                 raise RecordValidationError(
                     f"Invalid record {record_index} from stream {message.record.stream!r}: {exc}"
                 ) from exc
+            if metadata_policy == "ignore":
+                record = replace(record, modified_at=None)
             try:
                 client.upload_file(record, conflict_policy, root_path)
             except (DropboxAuthenticationError, DropboxRateLimitError, DropboxWriteError) as exc:

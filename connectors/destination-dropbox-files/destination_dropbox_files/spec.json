@@ -17,7 +17,8 @@
       },
       "root_path": {"title": "Dropbox destination root", "type": "string", "default": ""},
       "upload_chunk_size_mb": {"title": "Upload chunk size (MB)", "type": "integer", "minimum": 1, "maximum": 16, "default": 8},
-      "conflict_policy": {"type": "string", "enum": ["overwrite", "fail"], "default": "overwrite"}
+      "conflict_policy": {"type": "string", "enum": ["overwrite", "fail"], "default": "overwrite"},
+      "metadata_policy": {"title": "Client-modified timestamp policy", "description": "preserve uses source client_modified when supplied; ignore lets Dropbox assign its default timestamp.", "type": "string", "enum": ["preserve", "ignore"], "default": "preserve"}
     }
   }
 }

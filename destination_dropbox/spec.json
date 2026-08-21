@@ -70,6 +70,13 @@
         "type": "string",
         "enum": ["overwrite", "fail"],
         "default": "overwrite"
+      },
+      "metadata_policy": {
+        "title": "Client-modified timestamp policy",
+        "description": "preserve sends a supplied modified_at value as Dropbox client_modified. ignore lets Dropbox assign its default timestamp.",
+        "type": "string",
+        "enum": ["preserve", "ignore"],
+        "default": "preserve"
       }
     }
   }

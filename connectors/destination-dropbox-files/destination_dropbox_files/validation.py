@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
@@ -26,6 +27,13 @@ class StagedFile:
     destination_path: str
     size: int
     sha256: str | None
+    client_modified: datetime | None = None
+
+
+def normalize_metadata_policy(value: object) -> str:
+    if value not in {"preserve", "ignore"}:
+        raise FileReferenceValidationError("metadata_policy must be preserve or ignore.")
+    return str(value)
 
 
 def normalize_root_path(value: object) -> str:
@@ -42,7 +50,7 @@ def normalize_root_path(value: object) -> str:
 
 def validate_staged_file(
     *, staging_file_url: str | None, relative_path: object, file_size_bytes: object, root_path: str,
-    sha256: object,
+    sha256: object, client_modified: object = None, metadata_policy: str = "preserve",
 ) -> StagedFile:
     if not isinstance(staging_file_url, str) or not staging_file_url:
         raise FileReferenceValidationError("File reference is missing staging_file_url.")
@@ -64,11 +72,15 @@ def validate_staged_file(
     if actual_size != file_size_bytes:
         raise FileReferenceValidationError("Staged file size does not match file_size_bytes.")
     normalized_hash = sha256 if isinstance(sha256, str) and len(sha256) == 64 else None
+    parsed_client_modified = (
+        _parse_client_modified(client_modified) if metadata_policy == "preserve" else None
+    )
     return StagedFile(
         path=local_path,
         destination_path=f"{root_path}/{relative_path}" if root_path else f"/{relative_path}",
         size=actual_size,
         sha256=normalized_hash,
+        client_modified=parsed_client_modified,
     )
 
 
@@ -114,3 +126,18 @@ def _validate_relative_path(path: str) -> str:
     if any(part in {"", ".", ".."} for part in path.split("/")):
         raise FileReferenceValidationError("Propagation path contains an invalid segment.")
     return path
+
+
+def _parse_client_modified(value: object) -> datetime | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise FileReferenceValidationError("client_modified must be an RFC 3339 timestamp string.")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise FileReferenceValidationError("client_modified must be a valid RFC 3339 timestamp.") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise FileReferenceValidationError("client_modified must include a timezone.")
+    return parsed.astimezone(UTC)

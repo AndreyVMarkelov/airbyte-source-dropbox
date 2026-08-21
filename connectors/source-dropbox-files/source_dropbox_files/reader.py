@@ -4,6 +4,7 @@ import hashlib
 import logging
 import mimetypes
 from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from pathlib import Path
 from time import sleep
 from typing import Any
@@ -44,6 +45,8 @@ class DropboxFileRecordData(FileRecordData):
     rev: str | None
     content_hash: str | None
     sha256: str
+    client_modified: str | None
+    server_modified: str | None
 
 
 class DropboxRemoteFile(UploadableRemoteFile):
@@ -53,6 +56,8 @@ class DropboxRemoteFile(UploadableRemoteFile):
     content_hash: str | None = None
     path_lower: str | None = None
     path_display: str | None = None
+    client_modified: str | None = None
+    server_modified: str | None = None
     client: Any
     chunk_size_bytes: int
     _downloaded_sha256: str | None = PrivateAttr(default=None)
@@ -187,6 +192,8 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
                 rev=file.rev,
                 content_hash=file.content_hash,
                 sha256=file.downloaded_sha256,
+                client_modified=file.client_modified,
+                server_modified=file.server_modified,
             ),
             reference,
         )
@@ -214,16 +221,18 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         relative_path = self._relative_path(entry.path_display or entry.name)
         return DropboxRemoteFile(
             uri=relative_path,
-            last_modified=entry.server_modified,
+            last_modified=_last_modified(entry.server_modified, entry.client_modified),
             id=entry.id,
             size_bytes=entry.size,
             rev=entry.rev,
             content_hash=entry.content_hash,
             path_lower=entry.path_lower,
             path_display=entry.path_display,
+            client_modified=_utc_timestamp(entry.client_modified),
+            server_modified=_utc_timestamp(entry.server_modified),
             mime_type=mimetypes.guess_type(entry.name)[0],
-            created_at=entry.client_modified.isoformat() if entry.client_modified else None,
-            updated_at=entry.server_modified.isoformat() if entry.server_modified else None,
+            created_at=_utc_timestamp(entry.client_modified),
+            updated_at=_utc_timestamp(entry.server_modified),
             client=self,
             chunk_size_bytes=self.config.file_transfer.download_chunk_size_mb * 1024 * 1024,
         )
@@ -263,3 +272,22 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
                     failure_type=FailureType.system_error,
                 ) from exc
         raise AssertionError("Unreachable Dropbox retry state.")
+
+
+def _utc_timestamp(value: object) -> str | None:
+    """Return a valid UTC RFC 3339 timestamp, or omit provenance that cannot be normalized."""
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        return None
+    return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _last_modified(server_modified: object, client_modified: object) -> datetime:
+    """Provide FileBasedSource a timestamp without making optional provenance fatal."""
+    for value in (server_modified, client_modified):
+        if (
+            isinstance(value, datetime)
+            and value.tzinfo is not None
+            and value.utcoffset() is not None
+        ):
+            return value.astimezone(UTC)
+    return datetime(1970, 1, 1, tzinfo=UTC)

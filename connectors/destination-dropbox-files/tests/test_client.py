@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -10,7 +11,11 @@ from destination_dropbox_files.client import (
     DropboxFilesConflictError,
     DropboxFilesWriteError,
 )
-from destination_dropbox_files.validation import PropagationOperation, StagedFile
+from destination_dropbox_files.validation import (
+    PropagationOperation,
+    StagedFile,
+    validate_staged_file,
+)
 
 
 def _client() -> DropboxFilesClient:
@@ -29,7 +34,14 @@ def test_streams_staged_file_in_session_chunks_and_commits(tmp_path: Path) -> No
     content = b"a" * (1024 * 1024) + b"b" * 3
     path = tmp_path / "staged.bin"
     path.write_bytes(content)
-    staged = StagedFile(path=path, destination_path="/root/file.bin", size=len(content), sha256=None)
+    timestamp = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    staged = StagedFile(
+        path=path,
+        destination_path="/root/file.bin",
+        size=len(content),
+        sha256=None,
+        client_modified=timestamp,
+    )
     client = _client()
     client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
 
@@ -41,6 +53,7 @@ def test_streams_staged_file_in_session_chunks_and_commits(tmp_path: Path) -> No
     assert finish.args[0] == b"b" * 3
     assert finish.args[1].offset == 1024 * 1024
     assert finish.args[2].path == "/root/file.bin"
+    assert finish.args[2].client_modified == timestamp
 
 
 def test_creates_only_children_below_configured_root(tmp_path: Path) -> None:
@@ -97,6 +110,29 @@ def test_exact_chunk_boundary_finishes_with_empty_payload(tmp_path: Path) -> Non
     assert finish.args[2].mode.is_overwrite()
 
 
+def test_ignore_policy_uploads_unparseable_source_timestamp_without_committing_it(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "staged.bin"
+    path.write_bytes(b"x")
+    staged = validate_staged_file(
+        staging_file_url=path.as_uri(),
+        relative_path="file.bin",
+        file_size_bytes=1,
+        root_path="",
+        sha256=None,
+        client_modified="not-a-timestamp",
+        metadata_policy="ignore",
+    )
+    client = _client()
+    client._client.files_upload_session_start.return_value = SimpleNamespace(session_id="session")
+
+    client.upload_staged_file(staged, "", "overwrite")
+
+    commit = client._client.files_upload_session_finish.call_args.args[2]
+    assert commit.client_modified is None
+
+
 def test_transient_request_retries_then_succeeds() -> None:
     sleeper = Mock()
     client = DropboxFilesClient(
@@ -130,7 +166,7 @@ def test_finish_conflict_maps_to_destination_conflict(monkeypatch: pytest.Monkey
     monkeypatch.setattr(client, "_call", Mock(side_effect=error))
     monkeypatch.setattr(client, "_is_finish_conflict", Mock(return_value=True))
     with pytest.raises(DropboxFilesConflictError):
-        client._finish("session", 0, b"", "/file", "fail")
+        client._finish("session", 0, b"", StagedFile(Path("/file"), "/file", 0, None), "fail")
 
 
 def test_append_incorrect_offset_reseeks_and_finishes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

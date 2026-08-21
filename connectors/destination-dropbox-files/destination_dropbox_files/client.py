@@ -82,9 +82,7 @@ class DropboxFilesClient:
                 operation = "finish" if remaining <= self._chunk_size else "append"
                 try:
                     if operation == "finish":
-                        return self._finish(
-                            session_id, offset, payload, file.destination_path, conflict_policy
-                        )
+                        return self._finish(session_id, offset, payload, file, conflict_policy)
                     self._call(
                         "upload-session append",
                         lambda payload=payload, offset=offset: self._client.files_upload_session_append_v2(
@@ -158,8 +156,16 @@ class DropboxFilesClient:
             raise DropboxFilesWriteError("Dropbox propagation target is not a file.")
         return metadata
 
-    def _finish(self, session_id: str, offset: int, payload: bytes, path: str, policy: str) -> Any:
-        commit = CommitInfo(path=path, mode=WriteMode.overwrite if policy == "overwrite" else WriteMode.add, autorename=False, strict_conflict=policy == "fail")
+    def _finish(
+        self, session_id: str, offset: int, payload: bytes, file: StagedFile, policy: str
+    ) -> Any:
+        commit = CommitInfo(
+            path=file.destination_path,
+            mode=WriteMode.overwrite if policy == "overwrite" else WriteMode.add,
+            autorename=False,
+            client_modified=file.client_modified,
+            strict_conflict=policy == "fail",
+        )
         try:
             return self._call(
                 "upload-session finish",

@@ -12,6 +12,11 @@ downloads by Dropbox file ID in bounded chunks, not base64 records. Files above
 during its download is also skipped. Authentication, scope, staging, and
 transient-service failures stop the sync.
 
+Each native file-reference record includes `client_modified` when Dropbox returns
+a valid timestamp, normalized to UTC. It also includes `server_modified` as
+provenance only; neither timestamp participates in the byte-version cursor.
+`server_modified` is Dropbox-owned and is never treated as destination metadata.
+
 After the initial run, state tracks each successfully transferred Dropbox file
 by stable ID, revision, content hash, and relative path. Unchanged byte versions
 are skipped; changed or newly discovered files transfer again. The destination

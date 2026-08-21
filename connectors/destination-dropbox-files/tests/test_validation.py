@@ -1,3 +1,4 @@
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -34,6 +35,46 @@ def test_rejects_missing_or_mismatched_staged_file(tmp_path: Path) -> None:
             root_path="",
             sha256=None,
         )
+
+
+def test_validates_optional_client_modified_and_accepts_metadata_less_references(tmp_path: Path) -> None:
+    staged = tmp_path / "file.bin"
+    staged.write_bytes(b"data")
+
+    preserved = validate_staged_file(
+        staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
+        root_path="", sha256=None, client_modified="2026-08-18T14:00:00+02:00",
+    )
+    metadata_less = validate_staged_file(
+        staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
+        root_path="", sha256=None,
+    )
+    ignored = validate_staged_file(
+        staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
+        root_path="", sha256=None, client_modified="2026-08-18T14:00:00+02:00",
+        metadata_policy="ignore",
+    )
+
+    assert preserved.client_modified is not None
+    assert preserved.client_modified.tzinfo == UTC
+    assert preserved.client_modified.hour == 12
+    assert metadata_less.client_modified is None
+    assert ignored.client_modified is None
+
+
+def test_rejects_malformed_client_modified_only_when_preserving(tmp_path: Path) -> None:
+    staged = tmp_path / "file.bin"
+    staged.write_bytes(b"data")
+    with pytest.raises(FileReferenceValidationError, match="client_modified"):
+        validate_staged_file(
+            staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
+            root_path="", sha256=None, client_modified="not-a-timestamp",
+        )
+    ignored = validate_staged_file(
+        staging_file_url=staged.as_uri(), relative_path="file.bin", file_size_bytes=4,
+        root_path="", sha256=None, client_modified="not-a-timestamp", metadata_policy="ignore",
+    )
+    assert ignored.client_modified is None
 
 
 def test_validates_move_and_delete_control_records() -> None:
