@@ -16,6 +16,7 @@ from airbyte_cdk.models import (
 from destination_dropbox_files.client import DropboxFilesClient, DropboxFilesWriteError
 from destination_dropbox_files.validation import (
     FileReferenceValidationError,
+    normalize_metadata_policy,
     normalize_root_path,
     validate_propagation_operation,
     validate_staged_file,
@@ -29,6 +30,7 @@ class DestinationDropboxFiles(Destination):
     def check(self, logger: logging.Logger, config: Mapping[str, Any]) -> AirbyteConnectionStatus:
         try:
             root = normalize_root_path(config.get("root_path", ""))
+            normalize_metadata_policy(config.get("metadata_policy", "preserve"))
             client = DropboxFilesClient(config)
             client.current_account()
             client.verify_root_path(root)
@@ -46,6 +48,7 @@ class DestinationDropboxFiles(Destination):
         policy = config.get("conflict_policy", "overwrite")
         if policy not in {"overwrite", "fail"}:
             raise FileReferenceValidationError("conflict_policy must be overwrite or fail.")
+        metadata_policy = normalize_metadata_policy(config.get("metadata_policy", "preserve"))
         streams = {stream.stream.name for stream in configured_catalog.streams}
         client = DropboxFilesClient(config)
         client.verify_root_path(root)
@@ -85,6 +88,8 @@ class DestinationDropboxFiles(Destination):
                     file_size_bytes=reference.file_size_bytes,
                     root_path=root,
                     sha256=message.record.data.get("sha256"),
+                    client_modified=message.record.data.get("client_modified"),
+                    metadata_policy=metadata_policy,
                 )
                 verify_sha256(staged)
                 client.upload_staged_file(staged, root, policy)

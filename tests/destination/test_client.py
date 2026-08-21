@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -131,6 +132,7 @@ def test_upload_creates_parents_and_uses_overwrite_policy() -> None:
         "/Exports/nested/report.pdf",
         mode=WriteMode.overwrite,
         autorename=False,
+        client_modified=None,
         strict_conflict=False,
     )
 
@@ -211,6 +213,28 @@ def test_upload_session_orders_start_append_and_finish_with_offsets() -> None:
     assert commit.mode == WriteMode.overwrite
     assert commit.autorename is False
     assert commit.strict_conflict is False
+
+
+def test_direct_and_session_uploads_receive_the_same_client_modified_timestamp() -> None:
+    timestamp = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    direct = _write_client(threshold=4, chunk_size=4)
+    direct._ensured_folders = {"/Exports/nested"}
+    direct.upload_file(
+        ValidatedFileRecord("/Exports/nested/report.pdf", b"1234", None, timestamp),
+        "overwrite",
+        "/Exports",
+    )
+
+    session = _started_session_client(threshold=4, chunk_size=4)
+    session.upload_file(
+        ValidatedFileRecord("/Exports/nested/report.pdf", b"12345", None, timestamp),
+        "overwrite",
+        "/Exports",
+    )
+
+    assert direct._client.files_upload.call_args.kwargs["client_modified"] == timestamp
+    commit = session._client.files_upload_session_finish.call_args.args[2]
+    assert commit.client_modified == timestamp
 
 
 @pytest.mark.parametrize(

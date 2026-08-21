@@ -161,3 +161,35 @@ def test_check_rejects_an_unknown_conflict_policy() -> None:
 
     assert result.status == Status.FAILED
     assert "conflict_policy" in result.message
+
+
+def test_metadata_policy_ignore_removes_optional_modified_at_before_upload() -> None:
+    client = Mock()
+    data = {
+        **_data(),
+        "modified_at": "2026-08-18T14:00:00+02:00",
+    }
+    with patch("destination_dropbox.destination.DropboxClient", return_value=client):
+        list(
+            DestinationDropbox().write(
+                {**CONFIG, "metadata_policy": "ignore"},
+                _catalog("documents"),
+                [_record("documents", data)],
+            )
+        )
+
+    assert client.upload_file.call_args.args[0].modified_at is None
+
+
+def test_malformed_optional_modified_at_fails_before_upload() -> None:
+    client = Mock()
+    with patch("destination_dropbox.destination.DropboxClient", return_value=client):
+        with pytest.raises(RecordValidationError, match="Invalid record 1"):
+            list(
+                DestinationDropbox().write(
+                    CONFIG,
+                    _catalog("documents"),
+                    [_record("documents", {**_data(), "modified_at": "not-a-timestamp"})],
+                )
+            )
+    client.upload_file.assert_not_called()

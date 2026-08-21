@@ -43,6 +43,8 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
                 "rev": {"type": ["null", "string"]},
                 "content_hash": {"type": ["null", "string"]},
                 "sha256": {"type": "string"},
+                "client_modified": {"type": ["null", "string"], "format": "date-time"},
+                "server_modified": {"type": ["null", "string"], "format": "date-time"},
                 "operation": {"type": "string", "enum": ["move", "delete"]},
                 "old_path": {"type": "string"},
                 "new_path": {"type": "string"},

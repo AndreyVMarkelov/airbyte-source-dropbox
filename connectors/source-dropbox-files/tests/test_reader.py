@@ -63,9 +63,30 @@ def test_lists_live_files_relative_to_root_and_excludes_folders() -> None:
     assert len(files) == 1
     assert files[0].uri == "report.pdf"
     assert files[0].id == "id:file"
+    assert files[0].client_modified == "2026-01-01T00:00:00Z"
+    assert files[0].server_modified == "2026-01-01T00:00:00Z"
     reader._client.files_list_folder.assert_called_once_with(
         "/Exports", recursive=True, include_deleted=False
     )
+
+
+def test_malformed_server_modified_is_omitted_without_blocking_file_transfer() -> None:
+    entry = SimpleNamespace(
+        name="report.pdf",
+        id="id:file",
+        path_lower="/exports/report.pdf",
+        path_display="/Exports/report.pdf",
+        rev="0123456789",
+        size=4,
+        content_hash="0" * 64,
+        client_modified=datetime(2026, 1, 1, tzinfo=UTC),
+        server_modified=None,
+    )
+
+    remote = _reader()._remote_file(entry)
+
+    assert remote.client_modified == "2026-01-01T00:00:00Z"
+    assert remote.server_modified is None
 
 
 def test_raw_file_stream_advertises_incremental_sync() -> None:

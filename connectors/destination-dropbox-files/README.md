@@ -9,3 +9,10 @@ file into memory. It also accepts internal move/delete control records emitted b
 
 Required Dropbox scopes: `account_info.read`, `files.metadata.read`, and
 `files.content.write`. The write scope is also required for propagated moves and deletes.
+
+`metadata_policy` defaults to `preserve`. When a compatible source supplies a
+valid `client_modified` field, this destination normalizes it to UTC and applies
+it to the upload-session commit. Sources without Dropbox metadata remain
+compatible. Set `metadata_policy` to `ignore` to let Dropbox assign its default
+timestamp. `server_modified`, source IDs, revisions, and Dropbox content hashes
+are never submitted as destination write metadata.

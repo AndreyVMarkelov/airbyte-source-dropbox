@@ -132,6 +132,7 @@ class DropboxClient:
                     record.destination_path,
                     mode=mode,
                     autorename=False,
+                    client_modified=record.modified_at,
                     strict_conflict=conflict_policy == "fail",
                 ),
             )
@@ -168,7 +169,7 @@ class DropboxClient:
                 "Dropbox upload-session start returned an invalid result."
             )
 
-        commit = self._commit_info(record.destination_path, conflict_policy)
+        commit = self._commit_info(record.destination_path, conflict_policy, record.modified_at)
         offset = first_end
         recoveries = 0
         while True:
@@ -231,11 +232,14 @@ class DropboxClient:
             raise DropboxUploadSessionError("Dropbox upload session finish failed.") from exc
 
     @staticmethod
-    def _commit_info(destination_path: str, conflict_policy: str) -> CommitInfo:
+    def _commit_info(
+        destination_path: str, conflict_policy: str, client_modified: Any | None
+    ) -> CommitInfo:
         return CommitInfo(
             path=destination_path,
             mode=WriteMode.overwrite if conflict_policy == "overwrite" else WriteMode.add,
             autorename=False,
+            client_modified=client_modified,
             strict_conflict=conflict_policy == "fail",
         )
 

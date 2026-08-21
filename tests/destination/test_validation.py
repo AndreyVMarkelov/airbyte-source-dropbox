@@ -8,6 +8,7 @@ from destination_dropbox.validation import (
     DestinationConfigurationError,
     RecordValidationError,
     normalize_conflict_policy,
+    normalize_metadata_policy,
     normalize_root_path,
     normalize_upload_settings,
     validate_record,
@@ -19,6 +20,13 @@ def test_normalize_conflict_policy_accepts_supported_values_only() -> None:
     assert normalize_conflict_policy("fail") == "fail"
     with pytest.raises(DestinationConfigurationError, match="conflict_policy"):
         normalize_conflict_policy("rename")
+
+
+def test_normalize_metadata_policy_accepts_supported_values_only() -> None:
+    assert normalize_metadata_policy("preserve") == "preserve"
+    assert normalize_metadata_policy("ignore") == "ignore"
+    with pytest.raises(DestinationConfigurationError, match="metadata_policy"):
+        normalize_metadata_policy("replace")
 
 
 def test_upload_settings_defaults_and_bounds() -> None:

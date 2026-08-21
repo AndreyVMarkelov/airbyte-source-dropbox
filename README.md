@@ -10,7 +10,7 @@ Dropbox connectors for Airbyte, packaged together for shared development and rel
   - `shared_links` and `shared_folders` are sharing snapshots.
   - `file_contents` is opt-in Markdown extraction through Dropbox Riviera.
 - `destination_dropbox` writes validated file records to Dropbox, creating missing parent folders beneath its configured root.
-- `source-dropbox-files` is a separate native Airbyte File Transfer connector for original Dropbox bytes. It requires Airbyte platform 1.7 or newer and is the migration path for a future file-reference-aware destination.
+- `source-dropbox-files` is a separate native Airbyte File Transfer connector for original Dropbox bytes. It requires Airbyte platform 1.7 or newer and carries source `client_modified` plus provenance-only `server_modified` for migration.
 - `destination-dropbox-files` consumes native Airbyte file references and streams staged files to Dropbox upload sessions.
 
 ## Source Dropbox authentication
@@ -90,13 +90,15 @@ The tool validates the entire report before the first mutation, validates every 
 
 The destination accepts non-empty relative POSIX paths only and resolves them below `root_path`. It rejects absolute paths, backslashes, repeated separators, and traversal segments. Content must be RFC 4648 base64 and no larger than `max_file_size_mb` after decoding (10 MiB by default; 64 MiB maximum). `sha256`, if present, is verified against the decoded content; it is not Dropbox's `content_hash`. `modified_at`, if present, must be an RFC 3339 timestamp with a timezone.
 
+`metadata_policy` defaults to `preserve`: a supplied `modified_at` is normalized to UTC and sent to Dropbox as `client_modified`. Set it to `ignore` to let Dropbox assign its default client-modified timestamp. Dropbox owns `server_modified`; neither destination tries to recreate it. Source file IDs, revisions, and Dropbox `content_hash` remain source provenance and are never supplied as destination write identity.
+
 The production destination credential shape uses a Dropbox app key and refresh token. Destination connection checking requires `account_info.read` and `files.metadata.read`; uploads additionally require `files.content.write`. A non-empty `root_path` must already exist as a Dropbox folder. The destination creates only child folders below it.
 
 `conflict_policy` defaults to `overwrite`, which makes replayed records converge on the same Dropbox bytes. `fail` stops the sync if a destination path already has a conflicting item. A `fail` upload is intentionally not replay-idempotent after an ambiguous commit failure: Dropbox may have committed a file before a lost response, and a retry can then correctly report a conflict. Use `overwrite` when Airbyte replay safety is required. The destination creates missing parent folders, uploads records in input order, and emits an Airbyte `STATE` message only after every preceding upload succeeds.
 
 Files at or below `upload_session_threshold_mb` use Dropbox's direct upload API. Larger files use a sequential upload session: a first chunk is started, intermediate chunks are appended, and the final bytes are committed atomically. `upload_chunk_size_mb` controls the sequential chunk size (both settings default to 8 MiB). The decoded record remains in memory for this version. The connector retries transient Dropbox rate-limit/server errors per request, but does not persist upload-session IDs: a failed job replay starts a fresh session and safely overwrites the final path by default.
 
-Raw streaming, temporary files, persisted/cross-job sessions, parallel uploads, large files beyond the configured 64 MiB ceiling, deletes/moves, timestamps, sharing, and reconciliation remain out of scope.
+Raw streaming, temporary files, persisted/cross-job sessions, parallel uploads, large files beyond the configured 64 MiB ceiling, sharing, and reconciliation remain out of scope for the base64-record destination.
 
 ## Development
 

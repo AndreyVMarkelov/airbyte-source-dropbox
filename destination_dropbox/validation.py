@@ -12,6 +12,7 @@ from typing import Any
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RFC3339_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$")
 CONFLICT_POLICIES = frozenset({"overwrite", "fail"})
+METADATA_POLICIES = frozenset({"preserve", "ignore"})
 MAX_DESTINATION_FILE_SIZE_MB = 64
 MAX_UPLOAD_CHUNK_SIZE_MB = 16
 
@@ -57,6 +58,14 @@ def normalize_root_path(root_path: str) -> str:
 def normalize_conflict_policy(value: Any) -> str:
     if value not in CONFLICT_POLICIES:
         raise DestinationConfigurationError("conflict_policy must be either 'overwrite' or 'fail'.")
+    return value
+
+
+def normalize_metadata_policy(value: Any) -> str:
+    if value not in METADATA_POLICIES:
+        raise DestinationConfigurationError(
+            "metadata_policy must be either 'preserve' or 'ignore'."
+        )
     return value
 
 

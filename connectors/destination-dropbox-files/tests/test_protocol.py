@@ -33,7 +33,7 @@ def _record(path: str) -> AirbyteMessage:
         type=Type.RECORD,
         record=AirbyteRecordMessage(
             stream="raw_files",
-            data={},
+            data={"client_modified": "2026-08-18T14:00:00+02:00"},
             emitted_at=0,
             file_reference=AirbyteRecordMessageFileReference(
                 staging_file_url=path,
@@ -83,6 +83,7 @@ def test_successful_reference_releases_following_state(monkeypatch: pytest.Monke
     output = list(DestinationDropboxFiles().write(_config(), _catalog(), [_record(staged.as_uri()), state]))
 
     client.upload_staged_file.assert_called_once()
+    assert client.upload_staged_file.call_args.args[0].client_modified is not None
     assert output == [state]
 
 
