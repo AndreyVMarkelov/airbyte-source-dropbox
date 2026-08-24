@@ -5,6 +5,9 @@
   "required": ["link_key", "link_id", "url", "name", "target"],
   "properties": {
     "link_key": {"type": "string"},
+    "namespace_id": {"type": ["null", "string"]},
+    "namespace_name": {"type": ["null", "string"]},
+    "namespace_type": {"type": ["null", "string"]},
     "link_id": {"type": "string"},
     "url": {"type": "string"},
     "target_id": {"type": ["null", "string"]},

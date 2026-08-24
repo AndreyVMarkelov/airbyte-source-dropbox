@@ -5,6 +5,9 @@
   "required": ["id", "name"],
   "properties": {
     "id": {"type": "string"},
+    "namespace_id": {"type": ["null", "string"]},
+    "namespace_name": {"type": ["null", "string"]},
+    "namespace_type": {"type": ["null", "string"]},
     "name": {"type": "string"},
     "path_lower": {"type": ["null", "string"]},
     "path_display": {"type": ["null", "string"]},

@@ -80,6 +80,48 @@ non-default context is used. Reusing a cursor or file-transfer state with a
 different team member, admin, or Path Root fails closed; reset state when
 intentionally changing namespaces.
 
+### Structured source namespace traversal
+
+`source_dropbox` can also traverse multiple Dropbox Business namespaces for the
+structured metadata/sharing/Riviera streams. This is read-only namespace
+selection, not organization-wide member crawling.
+
+```json
+{
+  "namespace_selection": {
+    "mode": "current"
+  }
+}
+```
+
+Modes:
+
+- `current` is the default and preserves existing personal/single-root behavior.
+- `selected` traverses only explicit Dropbox namespace IDs:
+
+  ```json
+  {
+    "namespace_selection": {
+      "mode": "selected",
+      "namespace_ids": ["123456789", "987654321"]
+    }
+  }
+  ```
+
+- `all_accessible` uses Dropbox Business namespace listing APIs and traverses
+  every namespace visible to the configured team/member/admin context. This can
+  be broad and API-expensive on large teams.
+
+In multi-namespace mode, paths are interpreted relative to each namespace root.
+The same Dropbox path in two namespaces represents two distinct traversal
+contexts. Emitted records include `namespace_id`, plus nullable
+`namespace_name` and `namespace_type` when Dropbox exposes them.
+
+`entries` cursors and `file_contents` version state are isolated by namespace.
+Switching from `current` to `selected` or `all_accessible` requires resetting
+existing single-root state rather than silently reusing cursors under a
+different namespace model.
+
 ## Native file-transfer acceptance test
 
 The opt-in end-to-end profile pipes `source-dropbox-files` native file references directly to `destination-dropbox-files`. It expects the configured source root to contain `small.bin` and `nested/large-65mb.bin`; the latter is intentionally above the old 64 MiB in-memory limit. Set `DROPBOX_TRANSFER_SOURCE_CONFIG` and `DROPBOX_TRANSFER_DESTINATION_CONFIG` to local JSON configuration files, then run:

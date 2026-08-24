@@ -7,7 +7,7 @@ from airbyte_cdk.models import SyncMode
 
 from source_dropbox.normalizer import normalize_shared_link
 from source_dropbox.path_scope import in_configured_scope
-from source_dropbox.streams.base import DropboxStream
+from source_dropbox.streams.base import DropboxStream, with_namespace
 
 
 class SharedLinks(DropboxStream):
@@ -32,7 +32,7 @@ class SharedLinks(DropboxStream):
                 record = normalize_shared_link(link)
                 target_path = record["target"]["path_lower"]
                 if in_configured_scope(target_path, self.config.get("path", "")):
-                    yield record
+                    yield with_namespace(record, page.namespace)
                 else:
                     self.logger.warning(
                         "Skipping Dropbox shared link because its target is outside the "

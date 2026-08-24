@@ -4,7 +4,7 @@ from typing import Any
 
 from airbyte_cdk.sources.streams import Stream
 
-from source_dropbox.client import DropboxClient
+from source_dropbox.client import DropboxClient, NamespaceInfo
 
 
 class DropboxStream(Stream):
@@ -12,3 +12,12 @@ class DropboxStream(Stream):
         super().__init__()
         self.client = client
         self.config = config
+
+
+def with_namespace(record: dict[str, Any], namespace: NamespaceInfo | None) -> dict[str, Any]:
+    if namespace is None:
+        return record
+    namespaced = {**record, **namespace.provenance()}
+    if isinstance(namespaced.get("entry_key"), str):
+        namespaced["entry_key"] = f"{namespace.namespace_id}:{namespaced['entry_key']}"
+    return namespaced

@@ -4,6 +4,9 @@
   "additionalProperties": false,
   "required": ["shared_folder_id", "name"],
   "properties": {
+    "namespace_id": {"type": ["null", "string"]},
+    "namespace_name": {"type": ["null", "string"]},
+    "namespace_type": {"type": ["null", "string"]},
     "shared_folder_id": {"type": "string"}, "folder_id": {"type": ["null", "string"]}, "name": {"type": "string"},
     "path_lower": {"type": ["null", "string"]}, "path_display": {"type": ["null", "string"]}, "access_type": {"type": ["null", "string"]},
     "is_inside_team_folder": {"type": ["null", "boolean"]}, "is_team_folder": {"type": ["null", "boolean"]}, "preview_url": {"type": ["null", "string"]},
