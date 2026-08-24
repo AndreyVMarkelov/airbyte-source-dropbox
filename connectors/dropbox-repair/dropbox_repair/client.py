@@ -7,7 +7,6 @@ from pathlib import Path
 from time import sleep
 from typing import Any
 
-import dropbox
 from dropbox.exceptions import (
     ApiError,
     AuthError,
@@ -27,6 +26,8 @@ from dropbox.files import (
     WriteMode,
 )
 
+from dropbox_repair.dropbox_context import DropboxContextError, build_dropbox_client
+
 
 class RepairError(RuntimeError):
     pass
@@ -38,22 +39,13 @@ class SourceDriftError(RepairError):
 
 class DropboxRepairClient:
     def __init__(self, config: Mapping[str, Any], side: str, *, sleeper=sleep) -> None:
-        credentials = config.get("credentials")
-        if not isinstance(credentials, Mapping):
-            raise RepairError(f"{side} credentials are required.")
         kwargs = {"max_retries_on_error": 0, "max_retries_on_rate_limit": 0}
-        if credentials.get("auth_type") == "oauth2_pkce":
-            self._client = dropbox.Dropbox(
-                oauth2_refresh_token=_required_credential(credentials, "refresh_token", side),
-                app_key=_required_credential(credentials, "app_key", side),
-                **kwargs,
-            )
-        elif credentials.get("auth_type") == "access_token":
-            self._client = dropbox.Dropbox(
-                oauth2_access_token=_required_credential(credentials, "access_token", side), **kwargs
-            )
-        else:
-            raise RepairError(f"{side} credentials use an unsupported auth_type.")
+        try:
+            self._client = build_dropbox_client(config, **kwargs)
+        except DropboxContextError as exc:
+            raise RepairError(
+                f"{side} config must contain a non-empty access_token, app_key, or refresh_token."
+            ) from exc
         self.side = side
         self._folders: set[str] = set()
         self._sleeper = sleeper

@@ -12,6 +12,8 @@ from airbyte_cdk.sources.file_based.stream.cursor.abstract_file_based_cursor imp
     AbstractFileBasedCursor,
 )
 
+from source_dropbox_files.dropbox_context import context_key
+
 STATE_VERSION = 3
 
 
@@ -146,12 +148,13 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         delete_policy: str,
         path: str,
         recursive: bool,
+        context: Mapping[str, Any] | None = None,
     ) -> MigrationPlan:
         if rename_policy not in {"ignore", "propagate"}:
             raise ValueError("Dropbox file-transfer rename_policy is invalid.")
         if delete_policy not in {"ignore", "delete"}:
             raise ValueError("Dropbox file-transfer delete_policy is invalid.")
-        scope = _current_scope(path, recursive)
+        scope = _current_scope(path, recursive, context)
         if self._legacy_scope:
             if rename_policy == "propagate" or delete_policy == "delete":
                 raise ValueError(
@@ -223,12 +226,13 @@ class DropboxFileVersionCursor(AbstractFileBasedCursor):
         delete_policy: str,
         path: str,
         recursive: bool,
+        context: Mapping[str, Any] | None = None,
     ) -> MigrationPlan:
         if rename_policy not in {"ignore", "propagate"}:
             raise ValueError("Dropbox file-transfer rename_policy is invalid.")
         if delete_policy not in {"ignore", "delete"}:
             raise ValueError("Dropbox file-transfer delete_policy is invalid.")
-        scope = _current_scope(path, recursive)
+        scope = _current_scope(path, recursive, context)
         if self._scope != scope:
             raise ValueError(
                 "Dropbox file-transfer state scope does not match the configured traversal scope."
@@ -323,7 +327,13 @@ def _parse_scope(value: object) -> dict[str, Any]:
     recursive = value.get("recursive")
     if not isinstance(path, str) or not isinstance(recursive, bool):
         raise ValueError("Dropbox file-transfer state scope is invalid.")
-    return _current_scope(path, recursive)
+    scope = _current_scope(path, recursive)
+    context = value.get("context")
+    if context is not None:
+        if not isinstance(context, Mapping):
+            raise ValueError("Dropbox file-transfer state scope context is invalid.")
+        scope["context"] = dict(context)
+    return scope
 
 
 def _parse_cursor(value: object) -> str:
@@ -332,8 +342,19 @@ def _parse_cursor(value: object) -> str:
     return value
 
 
-def _current_scope(path: str, recursive: bool) -> dict[str, Any]:
-    return {"path": path.rstrip("/"), "recursive": recursive}
+def _current_scope(
+    path: str, recursive: bool, config: Mapping[str, Any] | None = None
+) -> dict[str, Any]:
+    scope: dict[str, Any] = {"path": path.rstrip("/"), "recursive": recursive}
+    if config:
+        context = (
+            dict(config)
+            if {"team_mode", "path_root_mode"} <= set(config)
+            else context_key(config).as_state_scope()
+        )
+        if context != {"team_mode": "none", "path_root_mode": "default"}:
+            scope["context"] = context
+    return scope
 
 
 def _validate_relative_path(path: str, file_id: str) -> None:

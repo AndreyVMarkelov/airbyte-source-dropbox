@@ -4,21 +4,157 @@
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Dropbox Files Destination Spec",
     "type": "object",
-    "required": ["credentials"],
+    "required": [
+      "credentials"
+    ],
     "additionalProperties": false,
     "properties": {
       "credentials": {
         "title": "Dropbox authentication",
         "type": "object",
         "oneOf": [
-          {"title": "OAuth 2.0 refresh token (recommended)", "required": ["auth_type", "app_key", "refresh_token"], "additionalProperties": false, "properties": {"auth_type": {"type": "string", "const": "oauth2_pkce"}, "app_key": {"type": "string"}, "refresh_token": {"type": "string", "airbyte_secret": true}}},
-          {"title": "Access token (development only)", "required": ["auth_type", "access_token"], "additionalProperties": false, "properties": {"auth_type": {"type": "string", "const": "access_token"}, "access_token": {"type": "string", "airbyte_secret": true}}}
+          {
+            "title": "OAuth 2.0 refresh token (recommended)",
+            "required": [
+              "auth_type",
+              "app_key",
+              "refresh_token"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "auth_type": {
+                "type": "string",
+                "const": "oauth2_pkce"
+              },
+              "app_key": {
+                "type": "string"
+              },
+              "refresh_token": {
+                "type": "string",
+                "airbyte_secret": true
+              }
+            }
+          },
+          {
+            "title": "Access token (development only)",
+            "required": [
+              "auth_type",
+              "access_token"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "auth_type": {
+                "type": "string",
+                "const": "access_token"
+              },
+              "access_token": {
+                "type": "string",
+                "airbyte_secret": true
+              }
+            }
+          }
         ]
       },
-      "root_path": {"title": "Dropbox destination root", "type": "string", "default": ""},
-      "upload_chunk_size_mb": {"title": "Upload chunk size (MB)", "type": "integer", "minimum": 1, "maximum": 16, "default": 8},
-      "conflict_policy": {"type": "string", "enum": ["overwrite", "fail"], "default": "overwrite"},
-      "metadata_policy": {"title": "Client-modified timestamp policy", "description": "preserve uses source client_modified when supplied; ignore lets Dropbox assign its default timestamp.", "type": "string", "enum": ["preserve", "ignore"], "default": "preserve"}
+      "root_path": {
+        "title": "Dropbox destination root",
+        "type": "string",
+        "default": ""
+      },
+      "upload_chunk_size_mb": {
+        "title": "Upload chunk size (MB)",
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 16,
+        "default": 8
+      },
+      "conflict_policy": {
+        "type": "string",
+        "enum": [
+          "overwrite",
+          "fail"
+        ],
+        "default": "overwrite"
+      },
+      "metadata_policy": {
+        "title": "Client-modified timestamp policy",
+        "description": "preserve uses source client_modified when supplied; ignore lets Dropbox assign its default timestamp.",
+        "type": "string",
+        "enum": [
+          "preserve",
+          "ignore"
+        ],
+        "default": "preserve"
+      },
+      "team_context": {
+        "title": "Dropbox Business context",
+        "description": "Optional Dropbox Business member/admin context. Leave as none for personal accounts and ordinary user-linked tokens.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "title": "Team context mode",
+            "type": "string",
+            "enum": [
+              "none",
+              "user",
+              "admin"
+            ],
+            "default": "none"
+          },
+          "select_user": {
+            "title": "Select member",
+            "description": "Dropbox Business member ID, for example dbmid:..., used when mode is user.",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          },
+          "select_admin": {
+            "title": "Select admin",
+            "description": "Dropbox Business admin member ID, for example dbmid:..., used when mode is admin.",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          }
+        },
+        "default": {
+          "mode": "none"
+        }
+      },
+      "path_root": {
+        "title": "Dropbox root",
+        "description": "Optional Dropbox Path Root. Use default behavior, member home, account/team root, or an explicit namespace ID.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "title": "Root mode",
+            "type": "string",
+            "enum": [
+              "default",
+              "home",
+              "root",
+              "namespace_id"
+            ],
+            "default": "default"
+          },
+          "namespace_id": {
+            "title": "Namespace ID",
+            "description": "Explicit Dropbox namespace/root ID used when mode is namespace_id.",
+            "type": [
+              "null",
+              "string"
+            ],
+            "default": null
+          }
+        },
+        "default": {
+          "mode": "default"
+        }
+      }
     }
   }
 }

@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from time import monotonic, sleep
 from typing import Any
 
-import dropbox
 from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
 from dropbox.file_properties import GetTemplateResult, TemplateFilter
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
@@ -20,6 +19,8 @@ from dropbox.sharing import (
     SharedFolderMetadata,
     SharedLinkMetadata,
 )
+
+from source_dropbox.dropbox_context import build_dropbox_client, effective_context_key
 
 
 @dataclass(frozen=True)
@@ -108,29 +109,18 @@ class DropboxClient:
         sleeper: Callable[[float], None] = sleep,
         monotonic_clock: Callable[[], float] = monotonic,
     ) -> None:
-        credentials = config["credentials"]
-        auth_type = credentials["auth_type"]
-
         common_kwargs = {
             "max_retries_on_error": 5,
             "max_retries_on_rate_limit": 5,
         }
 
-        if auth_type == "oauth2_pkce":
-            self._client = dropbox.Dropbox(
-                oauth2_refresh_token=credentials["refresh_token"],
-                app_key=credentials["app_key"],
-                **common_kwargs,
-            )
-        elif auth_type == "access_token":
-            self._client = dropbox.Dropbox(
-                oauth2_access_token=credentials["access_token"],
-                **common_kwargs,
-            )
-        else:
-            raise ValueError(f"Unsupported auth_type: {auth_type}")
+        self._client = build_dropbox_client(config, **common_kwargs)
+        self._context_scope = effective_context_key(config, self._client).as_state_scope()
         self._sleeper = sleeper
         self._monotonic_clock = monotonic_clock
+
+    def context_scope(self) -> dict[str, Any]:
+        return dict(self._context_scope)
 
     def current_account(self) -> Any:
         try:

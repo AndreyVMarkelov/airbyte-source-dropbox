@@ -18,6 +18,7 @@ class Entries(DropboxStream, CheckpointMixin):
         super().__init__(*args, **kwargs)
         self._state: MutableMapping[str, Any] = {}
         self._pages: dict[str, list[Any]] = {}
+        self._context_scope = _client_context_scope(self.client)
 
     @property
     def cursor_field(self) -> list[str]:
@@ -35,7 +36,11 @@ class Entries(DropboxStream, CheckpointMixin):
 
     @state.setter
     def state(self, value: MutableMapping[str, Any]) -> None:
-        self._state = dict(value or {})
+        incoming = dict(value or {})
+        context = incoming.get("context")
+        if context is not None and context != self._context_scope:
+            raise ValueError("Dropbox entries state context does not match the configured root.")
+        self._state = incoming
 
     def _cursor_for_sync(self, sync_mode: SyncMode) -> str | None:
         """Return a saved cursor only for an incremental change sync.
@@ -45,6 +50,13 @@ class Entries(DropboxStream, CheckpointMixin):
         prior full-refresh checkpoint as a Dropbox change cursor.
         """
         if sync_mode == SyncMode.incremental:
+            if _requires_context_scope(self._context_scope):
+                context = self.state.get("context")
+                if context is None and self.state.get("cursor"):
+                    raise ValueError(
+                        "Dropbox entries state has no Business/Path Root context; reset state "
+                        "before using this configured root."
+                    )
             return self.state.get("cursor")
         return None
 
@@ -92,8 +104,28 @@ class Entries(DropboxStream, CheckpointMixin):
             # The CDK observes this state and emits a checkpoint after
             # read_records() finishes for the slice. A Dropbox cursor therefore
             # never advances until every record in its page has been yielded.
-            self.state = {"cursor": page_cursor}
+            state = {"cursor": page_cursor}
+            if _requires_context_scope(self._context_scope):
+                state["context"] = self._context_scope
+            self.state = state
         finally:
             # A normalization or downstream read failure must not retain Dropbox
             # metadata in memory for the lifetime of the stream instance.
             self._pages.pop(page_cursor, None)
+
+
+def _requires_context_scope(context: Mapping[str, Any]) -> bool:
+    return context != {
+        "team_mode": "none",
+        "path_root_mode": "default",
+    }
+
+
+def _client_context_scope(client: Any) -> dict[str, Any]:
+    try:
+        context = client.context_scope()
+    except AttributeError:
+        context = None
+    if isinstance(context, Mapping):
+        return dict(context)
+    return {"team_mode": "none", "path_root_mode": "default"}

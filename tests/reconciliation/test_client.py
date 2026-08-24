@@ -32,7 +32,7 @@ def _client() -> DropboxReconciliationClient:
 
 def test_clients_are_built_from_independent_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
     factory = Mock()
-    monkeypatch.setattr(reconciliation_client.dropbox, "Dropbox", factory)
+    monkeypatch.setattr(reconciliation_client, "build_dropbox_client", factory)
 
     DropboxReconciliationClient(
         {"credentials": {"auth_type": "access_token", "access_token": "source-token"}}, "source"
@@ -42,8 +42,8 @@ def test_clients_are_built_from_independent_credentials(monkeypatch: pytest.Monk
         "destination",
     )
 
-    assert factory.call_args_list[0].kwargs["oauth2_access_token"] == "source-token"
-    assert factory.call_args_list[1].kwargs["oauth2_access_token"] == "destination-token"
+    assert factory.call_args_list[0].args[0]["credentials"]["access_token"] == "source-token"
+    assert factory.call_args_list[1].args[0]["credentials"]["access_token"] == "destination-token"
 
 
 def test_inventory_paginates_and_excludes_non_files(monkeypatch: pytest.MonkeyPatch) -> None:

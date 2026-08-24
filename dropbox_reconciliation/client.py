@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-import dropbox
 from dropbox.exceptions import (
     ApiError,
     AuthError,
@@ -14,6 +13,7 @@ from dropbox.exceptions import (
 from dropbox.files import FileMetadata, FolderMetadata
 
 from dropbox_reconciliation.models import FileInventoryItem, Inventory, InventoryPathIssue
+from source_dropbox.dropbox_context import build_dropbox_client
 
 
 class ReconciliationError(RuntimeError):
@@ -27,37 +27,9 @@ class DuplicateNormalizedPathError(ReconciliationError):
 class DropboxReconciliationClient:
     def __init__(self, config: Mapping[str, Any], side: Literal["source", "destination"]) -> None:
         self.side = side
-        credentials = config.get("credentials")
-        if not isinstance(credentials, Mapping):
-            raise ReconciliationError(f"{side} credentials are required.")
-        auth_type = credentials.get("auth_type")
-        if auth_type == "oauth2_pkce":
-            app_key = credentials.get("app_key")
-            refresh_token = credentials.get("refresh_token")
-            if (
-                not isinstance(app_key, str)
-                or not app_key
-                or not isinstance(refresh_token, str)
-                or not refresh_token
-            ):
-                raise ReconciliationError(f"{side} OAuth app_key and refresh_token are required.")
-            self._client = dropbox.Dropbox(
-                oauth2_refresh_token=refresh_token,
-                app_key=app_key,
-                max_retries_on_error=0,
-                max_retries_on_rate_limit=0,
-            )
-        elif auth_type == "access_token":
-            access_token = credentials.get("access_token")
-            if not isinstance(access_token, str) or not access_token:
-                raise ReconciliationError(f"{side} access_token is required.")
-            self._client = dropbox.Dropbox(
-                oauth2_access_token=access_token,
-                max_retries_on_error=0,
-                max_retries_on_rate_limit=0,
-            )
-        else:
-            raise ReconciliationError(f"{side} credentials use an unsupported auth_type.")
+        self._client = build_dropbox_client(
+            config, max_retries_on_error=0, max_retries_on_rate_limit=0
+        )
 
     def validate_root(self, root_path: object) -> str:
         root = _normalize_root(root_path)
