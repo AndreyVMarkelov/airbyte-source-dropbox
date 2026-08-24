@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -25,8 +26,19 @@ def _config(variable: str) -> dict[str, object]:
     return json.loads(Path(os.environ[variable]).read_text())
 
 
-def _upload(client: DropboxReconciliationClient, path: str, content: bytes) -> None:
-    client._client.files_upload(content, path, mode=WriteMode.overwrite)  # noqa: SLF001
+def _upload(
+    client: DropboxReconciliationClient,
+    path: str,
+    content: bytes,
+    *,
+    client_modified: datetime | None = None,
+) -> None:
+    client._client.files_upload(  # noqa: SLF001
+        content,
+        path,
+        mode=WriteMode.overwrite,
+        client_modified=client_modified,
+    )
 
 
 @pytest.mark.skipif(
@@ -58,14 +70,45 @@ def test_live_reconciliation_uses_independent_roots_and_cleans_up() -> None:
         destination_client._client.files_create_folder_v2(destination_child)  # noqa: SLF001
         destination_created = True
 
-        _upload(source_client, f"{source_child}/matched.bin", b"same")
-        _upload(destination_client, f"{destination_child}/matched.bin", b"same")
+        migrated_timestamp = datetime(2026, 8, 24, 12, 0, tzinfo=UTC)
+        _upload(
+            source_client,
+            f"{source_child}/matched.bin",
+            b"same",
+            client_modified=migrated_timestamp,
+        )
+        _upload(
+            destination_client,
+            f"{destination_child}/matched.bin",
+            b"same",
+            client_modified=migrated_timestamp,
+        )
         _upload(source_client, f"{source_child}/missing.bin", b"source")
         _upload(destination_client, f"{destination_child}/extra.bin", b"destination")
-        _upload(source_client, f"{source_child}/size.bin", b"longer")
-        _upload(destination_client, f"{destination_child}/size.bin", b"x")
-        _upload(source_client, f"{source_child}/hash.bin", b"source")
-        _upload(destination_client, f"{destination_child}/hash.bin", b"target")
+        _upload(
+            source_client,
+            f"{source_child}/size.bin",
+            b"longer",
+            client_modified=migrated_timestamp,
+        )
+        _upload(
+            destination_client,
+            f"{destination_child}/size.bin",
+            b"x",
+            client_modified=migrated_timestamp,
+        )
+        _upload(
+            source_client,
+            f"{source_child}/hash.bin",
+            b"source",
+            client_modified=migrated_timestamp,
+        )
+        _upload(
+            destination_client,
+            f"{destination_child}/hash.bin",
+            b"target",
+            client_modified=migrated_timestamp,
+        )
 
         records = reconcile(
             source_client.inventory(source_child), destination_client.inventory(destination_child)
