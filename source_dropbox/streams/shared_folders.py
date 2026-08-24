@@ -6,7 +6,7 @@ from typing import Any
 from airbyte_cdk.models import SyncMode
 
 from source_dropbox.normalizer import normalize_shared_folder
-from source_dropbox.streams.base import DropboxStream
+from source_dropbox.streams.base import DropboxStream, with_namespace
 
 
 class SharedFolders(DropboxStream):
@@ -27,4 +27,5 @@ class SharedFolders(DropboxStream):
         stream_state: Mapping[str, Any] | None = None,
     ) -> Iterable[Mapping[str, Any]]:
         for page in self.client.iter_shared_folders():
-            yield from (normalize_shared_folder(folder) for folder in page.entries)
+            for folder in page.entries:
+                yield with_namespace(normalize_shared_folder(folder), page.namespace)

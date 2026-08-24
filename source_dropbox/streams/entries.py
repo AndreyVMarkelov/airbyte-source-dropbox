@@ -6,8 +6,9 @@ from typing import Any
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import CheckpointMixin
 
+from source_dropbox.client import NamespaceInfo
 from source_dropbox.normalizer import normalize_entry
-from source_dropbox.streams.base import DropboxStream
+from source_dropbox.streams.base import DropboxStream, with_namespace
 
 
 class Entries(DropboxStream, CheckpointMixin):
@@ -17,7 +18,7 @@ class Entries(DropboxStream, CheckpointMixin):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._state: MutableMapping[str, Any] = {}
-        self._pages: dict[str, list[Any]] = {}
+        self._pages: dict[str, tuple[list[Any], NamespaceInfo | None, str]] = {}
         self._context_scope = _client_context_scope(self.client)
 
     @property
@@ -40,9 +41,14 @@ class Entries(DropboxStream, CheckpointMixin):
         context = incoming.get("context")
         if context is not None and context != self._context_scope:
             raise ValueError("Dropbox entries state context does not match the configured root.")
+        if _is_multi_namespace(self.client) and incoming.get("cursor"):
+            raise ValueError(
+                "Dropbox entries single-namespace state cannot be reused with "
+                "namespace_selection selected/all_accessible; reset state."
+            )
         self._state = incoming
 
-    def _cursor_for_sync(self, sync_mode: SyncMode) -> str | None:
+    def _cursor_for_sync(self, sync_mode: SyncMode) -> Mapping[str, str] | str | None:
         """Return a saved cursor only for an incremental change sync.
 
         A full refresh is always a new snapshot from the configured root. It may
@@ -50,6 +56,18 @@ class Entries(DropboxStream, CheckpointMixin):
         prior full-refresh checkpoint as a Dropbox change cursor.
         """
         if sync_mode == SyncMode.incremental:
+            if _is_multi_namespace(self.client):
+                namespaces = self.state.get("namespaces", {})
+                if not isinstance(namespaces, Mapping):
+                    raise ValueError("Dropbox entries namespace state must be an object.")
+                cursors: dict[str, str] = {}
+                for namespace_id, state in namespaces.items():
+                    if not isinstance(namespace_id, str) or not isinstance(state, Mapping):
+                        raise ValueError("Dropbox entries namespace state is invalid.")
+                    cursor = state.get("cursor")
+                    if isinstance(cursor, str) and cursor:
+                        cursors[namespace_id] = cursor
+                return cursors
             if _requires_context_scope(self._context_scope):
                 context = self.state.get("context")
                 if context is None and self.state.get("cursor"):
@@ -77,9 +95,10 @@ class Entries(DropboxStream, CheckpointMixin):
         ):
             # Keep Dropbox SDK metadata out of slice logs. The opaque cursor lets
             # read_records retrieve exactly one complete Dropbox page.
-            self._pages[page.cursor] = page.entries
-            yield {"cursor": page.cursor}
-            if self.state.get("cursor") != page.cursor:
+            page_id = _page_id(page.cursor, page.namespace)
+            self._pages[page_id] = (page.entries, page.namespace, page.cursor)
+            yield {"cursor": page_id}
+            if not self._page_was_checkpointed(page.cursor, page.namespace):
                 # The CDK can stop consuming a slice when an internal record limit
                 # is reached. Do not advance to a later Dropbox page unless this
                 # page completed and updated its state.
@@ -96,22 +115,51 @@ class Entries(DropboxStream, CheckpointMixin):
             return
 
         page_cursor = stream_slice["cursor"]
-        entries = self._pages[page_cursor]
+        cached_page = self._pages[page_cursor]
+        if isinstance(cached_page, tuple):
+            entries, page_namespace, dropbox_cursor = cached_page
+        else:
+            entries, page_namespace, dropbox_cursor = cached_page, None, page_cursor
         try:
             for entry in entries:
-                yield normalize_entry(entry)
+                yield with_namespace(normalize_entry(entry), page_namespace)
 
             # The CDK observes this state and emits a checkpoint after
             # read_records() finishes for the slice. A Dropbox cursor therefore
             # never advances until every record in its page has been yielded.
-            state = {"cursor": page_cursor}
-            if _requires_context_scope(self._context_scope):
-                state["context"] = self._context_scope
-            self.state = state
+            self._checkpoint_page(dropbox_cursor, page_namespace)
         finally:
             # A normalization or downstream read failure must not retain Dropbox
             # metadata in memory for the lifetime of the stream instance.
             self._pages.pop(page_cursor, None)
+
+    def _page_was_checkpointed(
+        self, cursor: str, namespace: NamespaceInfo | None
+    ) -> bool:
+        if namespace is None:
+            return self.state.get("cursor") == cursor
+        namespaces = self.state.get("namespaces", {})
+        if not isinstance(namespaces, Mapping):
+            return False
+        state = namespaces.get(namespace.namespace_id)
+        return isinstance(state, Mapping) and state.get("cursor") == cursor
+
+    def _checkpoint_page(self, cursor: str, namespace: NamespaceInfo | None) -> None:
+        if namespace is None:
+            state = {"cursor": cursor}
+            if _requires_context_scope(self._context_scope):
+                state["context"] = self._context_scope
+            self.state = state
+            return
+        namespaces = dict(self.state.get("namespaces", {}))
+        namespaces[namespace.namespace_id] = {"cursor": cursor}
+        self.state = {
+            "context": self._context_scope,
+            "namespaces": {
+                namespace_id: namespaces[namespace_id]
+                for namespace_id in sorted(namespaces)
+            },
+        }
 
 
 def _requires_context_scope(context: Mapping[str, Any]) -> bool:
@@ -129,3 +177,13 @@ def _client_context_scope(client: Any) -> dict[str, Any]:
     if isinstance(context, Mapping):
         return dict(context)
     return {"team_mode": "none", "path_root_mode": "default"}
+
+
+def _is_multi_namespace(client: Any) -> bool:
+    return getattr(client, "is_multi_namespace", False) is True
+
+
+def _page_id(cursor: str, namespace: NamespaceInfo | None) -> str:
+    if namespace is None:
+        return cursor
+    return f"{namespace.namespace_id}:{cursor}"

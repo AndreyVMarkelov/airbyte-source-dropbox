@@ -200,6 +200,37 @@
         "default": {
           "mode": "default"
         }
+      },
+      "namespace_selection": {
+        "title": "Namespace selection",
+        "description": "Dropbox Business namespace traversal. Use current root for personal accounts and existing single-root behavior.",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "mode": {
+            "title": "Namespace mode",
+            "description": "Use current root, selected namespace IDs, or all accessible Business namespaces.",
+            "type": "string",
+            "enum": [
+              "current",
+              "selected",
+              "all_accessible"
+            ],
+            "default": "current"
+          },
+          "namespace_ids": {
+            "title": "Namespace IDs",
+            "description": "Dropbox namespace IDs to traverse when mode is selected.",
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "default": []
+          }
+        },
+        "default": {
+          "mode": "current"
+        }
       }
     }
   }

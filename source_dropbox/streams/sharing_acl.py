@@ -8,7 +8,7 @@ from airbyte_cdk.models import SyncMode
 from source_dropbox.client import DropboxSharingAclError
 from source_dropbox.normalizer import normalize_sharing_acl
 from source_dropbox.path_scope import in_configured_scope
-from source_dropbox.streams.base import DropboxStream
+from source_dropbox.streams.base import DropboxStream, with_namespace
 
 
 class SharingAcl(DropboxStream):
@@ -50,6 +50,7 @@ class SharingAcl(DropboxStream):
                         *member_page.invitees,
                     ]:
                         record = normalize_sharing_acl(folder, member)
+                        record = with_namespace(record, folder_page.namespace)
                         acl_key = record["acl_key"]
                         duplicate = seen.get(acl_key)
                         if duplicate == record:

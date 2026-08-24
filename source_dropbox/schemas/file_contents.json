@@ -5,6 +5,9 @@
   "required": ["file_id", "rev", "content_hash", "name", "size", "content_format", "markdown", "extraction_status"],
   "properties": {
     "file_id": {"type": "string"},
+    "namespace_id": {"type": ["null", "string"]},
+    "namespace_name": {"type": ["null", "string"]},
+    "namespace_type": {"type": ["null", "string"]},
     "rev": {"type": ["null", "string"]},
     "content_hash": {"type": ["null", "string"]},
     "name": {"type": "string"},

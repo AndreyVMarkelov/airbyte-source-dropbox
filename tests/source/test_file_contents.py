@@ -89,7 +89,7 @@ def test_file_contents_filters_extensions_and_size_boundaries() -> None:
     assert records[0]["content_format"] == "markdown"
     assert records[0]["client_modified"] == "2026-08-01T00:00:00Z"
     assert records[0]["server_modified"] == "2026-08-01T01:00:00Z"
-    client.extract_markdown.assert_called_once_with("id:file", 10)
+    client.extract_markdown.assert_called_once_with("id:file", 10, namespace_id=None)
     client.iter_entries.assert_called_once_with(
         path="/configured", recursive=False, include_deleted=False
     )
@@ -187,7 +187,7 @@ def test_file_contents_incremental_first_run_extracts_and_updates_state() -> Non
     records = _consume_file_contents(stream, SyncMode.incremental)
 
     assert [record["file_id"] for record in records] == ["id:file"]
-    client.extract_markdown.assert_called_once_with("id:file", 10)
+    client.extract_markdown.assert_called_once_with("id:file", 10, namespace_id=None)
     assert stream.state == {
         "version": 1,
         "files": {
@@ -362,7 +362,7 @@ def test_file_contents_timeout_record_does_not_advance_state_and_retries_next_ru
     retry_records = _consume_file_contents(retry_stream, SyncMode.incremental)
 
     assert retry_records[0]["markdown"] == "# Retry"
-    retry_client.extract_markdown.assert_called_once_with("id:file", 10)
+    retry_client.extract_markdown.assert_called_once_with("id:file", 10, namespace_id=None)
 
 
 def test_file_contents_state_validation_and_deterministic_serialization() -> None:

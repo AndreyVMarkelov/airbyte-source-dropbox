@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from time import monotonic, sleep
 from typing import Any
@@ -20,7 +20,25 @@ from dropbox.sharing import (
     SharedLinkMetadata,
 )
 
-from source_dropbox.dropbox_context import build_dropbox_client, effective_context_key
+from source_dropbox.dropbox_context import (
+    build_dropbox_client,
+    build_dropbox_team_client,
+    effective_context_key,
+)
+
+
+@dataclass(frozen=True)
+class NamespaceInfo:
+    namespace_id: str
+    name: str | None = None
+    namespace_type: str | None = None
+
+    def provenance(self) -> dict[str, str | None]:
+        return {
+            "namespace_id": self.namespace_id,
+            "namespace_name": self.name,
+            "namespace_type": self.namespace_type,
+        }
 
 
 @dataclass(frozen=True)
@@ -28,6 +46,7 @@ class DropboxPage:
     entries: list[Metadata]
     cursor: str
     has_more: bool
+    namespace: NamespaceInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -35,12 +54,14 @@ class SharedLinksPage:
     links: list[SharedLinkMetadata]
     cursor: str | None
     has_more: bool
+    namespace: NamespaceInfo | None = None
 
 
 @dataclass(frozen=True)
 class SharedFoldersPage:
     entries: list[SharedFolderMetadata]
     cursor: str | None
+    namespace: NamespaceInfo | None = None
 
 
 @dataclass(frozen=True)
@@ -101,6 +122,10 @@ class DropboxFilePropertiesError(RuntimeError):
     """Raised when Dropbox File Properties cannot be listed safely."""
 
 
+class DropboxNamespaceError(RuntimeError):
+    """Raised when Dropbox Business namespaces cannot be resolved safely."""
+
+
 class DropboxClient:
     def __init__(
         self,
@@ -114,25 +139,67 @@ class DropboxClient:
             "max_retries_on_rate_limit": 5,
         }
 
+        self._config = config
+        self._common_kwargs = common_kwargs
         self._client = build_dropbox_client(config, **common_kwargs)
         self._context_scope = effective_context_key(config, self._client).as_state_scope()
+        self._namespaces = self._resolve_namespaces(config)
+        self._namespace_clients = self._build_namespace_clients(config)
+        self._shared_folder_clients: dict[str, Any] = {}
         self._sleeper = sleeper
         self._monotonic_clock = monotonic_clock
 
     def context_scope(self) -> dict[str, Any]:
         return dict(self._context_scope)
 
+    @property
+    def namespace_mode(self) -> str:
+        return _namespace_selection(getattr(self, "_config", {})).get("mode", "current")
+
+    @property
+    def is_multi_namespace(self) -> bool:
+        return self.namespace_mode != "current"
+
+    @property
+    def namespaces(self) -> list[NamespaceInfo]:
+        return list(self._namespaces)
+
     def current_account(self) -> Any:
         try:
-            return self._client.users_get_current_account()
+            account = self._client.users_get_current_account()
+            if self.is_multi_namespace:
+                for _, client in self._iter_namespace_clients():
+                    client.files_list_folder(
+                        path=self._config.get("path", ""),
+                        recursive=False,
+                        include_deleted=False,
+                    )
+            return account
         except (AuthError, BadInputError) as exc:
             self._raise_auth_or_refresh_error(exc)
+        except ApiError as exc:
+            raise DropboxNamespaceError(
+                "Dropbox namespace selection is invalid or inaccessible."
+            ) from exc
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited the connection check.") from exc
 
     def list_folder(self, path: str, recursive: bool, include_deleted: bool) -> DropboxPage:
+        return self._list_folder_for_client(
+            self._client, path=path, recursive=recursive, include_deleted=include_deleted
+        )
+
+    def _list_folder_for_client(
+        self,
+        client: Any,
+        *,
+        path: str,
+        recursive: bool,
+        include_deleted: bool,
+        namespace: NamespaceInfo | None = None,
+    ) -> DropboxPage:
         try:
-            result = self._client.files_list_folder(
+            result = client.files_list_folder(
                 path=path,
                 recursive=recursive,
                 include_deleted=include_deleted,
@@ -141,12 +208,24 @@ class DropboxClient:
             self._raise_auth_or_refresh_error(exc)
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited folder synchronization.") from exc
-        return self._to_page(result)
+        return self._to_page(result, namespace=namespace)
 
     def list_folder_with_property_groups(self, path: str, recursive: bool) -> DropboxPage:
+        return self._list_folder_with_property_groups_for_client(
+            self._client, path=path, recursive=recursive
+        )
+
+    def _list_folder_with_property_groups_for_client(
+        self,
+        client: Any,
+        *,
+        path: str,
+        recursive: bool,
+        namespace: NamespaceInfo | None = None,
+    ) -> DropboxPage:
         """List live folder entries with all attached Dropbox File Properties."""
         try:
-            result = self._client.files_list_folder(
+            result = client.files_list_folder(
                 path=path,
                 recursive=recursive,
                 include_deleted=False,
@@ -162,11 +241,16 @@ class DropboxClient:
             raise DropboxFilePropertiesError(
                 "Dropbox could not list files with File Properties."
             ) from exc
-        return self._to_page(result)
+        return self._to_page(result, namespace=namespace)
 
     def list_folder_continue(self, cursor: str) -> DropboxPage:
+        return self._list_folder_continue_for_client(self._client, cursor)
+
+    def _list_folder_continue_for_client(
+        self, client: Any, cursor: str, namespace: NamespaceInfo | None = None
+    ) -> DropboxPage:
         try:
-            result = self._client.files_list_folder_continue(cursor)
+            result = client.files_list_folder_continue(cursor)
         except (AuthError, BadInputError) as exc:
             self._raise_auth_or_refresh_error(exc)
         except ApiError as exc:
@@ -177,9 +261,99 @@ class DropboxClient:
             raise
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited folder synchronization.") from exc
-        return self._to_page(result)
+        return self._to_page(result, namespace=namespace)
 
     def iter_entries(
+        self,
+        *,
+        path: str,
+        recursive: bool,
+        include_deleted: bool,
+        cursor: Mapping[str, str] | str | None = None,
+    ) -> Iterator[DropboxPage]:
+        if self.is_multi_namespace:
+            cursor_by_namespace = cursor if isinstance(cursor, dict) else {}
+            for namespace, client in self._iter_namespace_clients():
+                namespace_cursor = cursor_by_namespace.get(namespace.namespace_id)
+                yield from self._iter_entries_for_client(
+                    client,
+                    path=path,
+                    recursive=recursive,
+                    include_deleted=include_deleted,
+                    cursor=namespace_cursor,
+                    namespace=namespace,
+                )
+            return
+        if not hasattr(self, "_client"):
+            yield from self._iter_entries_legacy(
+                path=path,
+                recursive=recursive,
+                include_deleted=include_deleted,
+                cursor=cursor if isinstance(cursor, str) else None,
+            )
+            return
+        yield from self._iter_entries_for_client(
+            self._client,
+            path=path,
+            recursive=recursive,
+            include_deleted=include_deleted,
+            cursor=cursor if isinstance(cursor, str) else None,
+        )
+
+    def _iter_entries_for_client(
+        self,
+        client: Any,
+        *,
+        path: str,
+        recursive: bool,
+        include_deleted: bool,
+        cursor: str | None = None,
+        namespace: NamespaceInfo | None = None,
+    ) -> Iterator[DropboxPage]:
+        reset_recovered = False
+        try:
+            page = (
+                self._list_folder_continue_for_client(client, cursor, namespace)
+                if cursor
+                else self._list_folder_for_client(
+                    client,
+                    path=path,
+                    recursive=recursive,
+                    include_deleted=include_deleted,
+                    namespace=namespace,
+                )
+            )
+        except DropboxCursorResetError:
+            page = self._list_folder_for_client(
+                client,
+                path=path,
+                recursive=recursive,
+                include_deleted=include_deleted,
+                namespace=namespace,
+            )
+            reset_recovered = True
+
+        while True:
+            yield page
+            if not page.has_more:
+                break
+            try:
+                page = self._list_folder_continue_for_client(client, page.cursor, namespace)
+            except DropboxCursorResetError:
+                if reset_recovered:
+                    raise
+                # A reset cannot safely resume a partial listing. Restarting from the
+                # configured root may replay records, but cannot skip records.
+                page = self._list_folder_for_client(
+                    client,
+                    path=path,
+                    recursive=recursive,
+                    include_deleted=include_deleted,
+                    namespace=namespace,
+                )
+                reset_recovered = True
+
+    def _iter_entries_legacy(
         self,
         *,
         path: str,
@@ -207,8 +381,6 @@ class DropboxClient:
             except DropboxCursorResetError:
                 if reset_recovered:
                     raise
-                # A reset cannot safely resume a partial listing. Restarting from the
-                # configured root may replay records, but cannot skip records.
                 page = self.list_folder(path, recursive, include_deleted)
                 reset_recovered = True
 
@@ -218,12 +390,15 @@ class DropboxClient:
         path: str,
         recursive: bool,
     ) -> Iterator[DropboxPage]:
-        page = self.list_folder_with_property_groups(path, recursive)
-        while True:
-            yield page
-            if not page.has_more:
-                break
-            page = self.list_folder_continue(page.cursor)
+        for namespace, client in self._iter_namespace_clients():
+            page = self._list_folder_with_property_groups_for_client(
+                client, path=path, recursive=recursive, namespace=namespace
+            )
+            while True:
+                yield page
+                if not page.has_more:
+                    break
+                page = self._list_folder_continue_for_client(client, page.cursor, namespace)
 
     def get_property_template(self, template_id: str) -> GetTemplateResult | None:
         try:
@@ -241,11 +416,17 @@ class DropboxClient:
 
     def iter_shared_links(self) -> Iterator[SharedLinksPage]:
         """List the authenticated account's shared-link inventory."""
+        for namespace, client in self._iter_namespace_clients():
+            yield from self._iter_shared_links_for_client(client, namespace=namespace)
+
+    def _iter_shared_links_for_client(
+        self, client: Any, namespace: NamespaceInfo | None = None
+    ) -> Iterator[SharedLinksPage]:
         cursor: str | None = None
         reset_recovered = False
         while True:
             try:
-                result = self._client.sharing_list_shared_links(cursor=cursor)
+                result = client.sharing_list_shared_links(cursor=cursor)
             except (AuthError, BadInputError) as exc:
                 self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
             except RateLimitError as exc:
@@ -264,7 +445,7 @@ class DropboxClient:
                     reset_recovered = True
                     continue
                 raise
-            page = self._to_shared_links_page(result)
+            page = self._to_shared_links_page(result, namespace=namespace)
             yield page
             if not page.has_more:
                 break
@@ -274,15 +455,29 @@ class DropboxClient:
 
     def iter_shared_folders(self) -> Iterator[SharedFoldersPage]:
         """List all shared folders available to the authenticated account."""
+        for namespace, client in self._iter_namespace_clients():
+            yield from self._iter_shared_folders_for_client(client, namespace=namespace)
+
+    def _iter_shared_folders_for_client(
+        self, client: Any, namespace: NamespaceInfo | None = None
+    ) -> Iterator[SharedFoldersPage]:
         reset_recovered = False
-        result = self._list_shared_folders()
+        result = self._list_shared_folders(client)
         while True:
-            page = self._to_shared_folders_page(result)
+            page = self._to_shared_folders_page(result, namespace=namespace)
+            for folder in page.entries:
+                folder_id = getattr(folder, "shared_folder_id", None)
+                if isinstance(folder_id, str) and folder_id:
+                    folder_clients = getattr(self, "_shared_folder_clients", None)
+                    if folder_clients is None:
+                        self._shared_folder_clients = {}
+                        folder_clients = self._shared_folder_clients
+                    folder_clients[folder_id] = client
             yield page
             if page.cursor is None:
                 break
             try:
-                result = self._client.sharing_list_folders_continue(page.cursor)
+                result = client.sharing_list_folders_continue(page.cursor)
             except (AuthError, BadInputError) as exc:
                 self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
             except RateLimitError as exc:
@@ -300,7 +495,7 @@ class DropboxClient:
                         ) from exc
                     # A full refresh can restart safely. The shared_folder_id primary key
                     # lets destinations deduplicate entries replayed from the first page.
-                    result = self._list_shared_folders()
+                    result = self._list_shared_folders(client)
                     reset_recovered = True
                 else:
                     raise
@@ -309,8 +504,10 @@ class DropboxClient:
         self, shared_folder_id: str
     ) -> Iterator[SharedFolderMembersPage]:
         """List all user/group/invitee members for one shared folder."""
+        folder_clients = getattr(self, "_shared_folder_clients", {})
+        client = folder_clients.get(shared_folder_id, self._client)
         try:
-            result = self._client.sharing_list_folder_members(shared_folder_id)
+            result = client.sharing_list_folder_members(shared_folder_id)
         except (AuthError, BadInputError) as exc:
             self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
         except RateLimitError as exc:
@@ -328,7 +525,7 @@ class DropboxClient:
             if page.cursor is None:
                 break
             try:
-                result = self._client.sharing_list_folder_members_continue(page.cursor)
+                result = client.sharing_list_folder_members_continue(page.cursor)
             except (AuthError, BadInputError) as exc:
                 self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
             except RateLimitError as exc:
@@ -346,18 +543,21 @@ class DropboxClient:
                     f"{shared_folder_id}."
                 ) from exc
 
-    def _list_shared_folders(self) -> ListFoldersResult:
+    def _list_shared_folders(self, client: Any) -> ListFoldersResult:
         try:
-            return self._client.sharing_list_folders()
+            return client.sharing_list_folders()
         except (AuthError, BadInputError) as exc:
             self._raise_auth_or_refresh_error(exc, required_scope="sharing.read")
         except RateLimitError as exc:
             raise DropboxRateLimitError("Dropbox rate limited sharing synchronization.") from exc
 
-    def extract_markdown(self, file_id: str, timeout_seconds: int) -> MarkdownExtraction:
+    def extract_markdown(
+        self, file_id: str, timeout_seconds: int, *, namespace_id: str | None = None
+    ) -> MarkdownExtraction:
         """Convert a Dropbox file to Markdown through Riviera's asynchronous API."""
+        client = self._client_for_namespace(namespace_id)
         try:
-            launch = self._client.riviera_get_markdown_async(
+            launch = client.riviera_get_markdown_async(
                 file_id_or_url=FileIdOrUrl.file_id(file_id),
                 enable_ocr=False,
                 embed_images=False,
@@ -387,7 +587,7 @@ class DropboxClient:
                     error_type="timeout",
                     error_message=f"Riviera extraction exceeded {timeout_seconds} seconds.",
                 )
-            result = self._check_markdown_job(job_id)
+            result = self._check_markdown_job(job_id, client=client)
             if not isinstance(result, GetMarkdownAsyncCheckResult):
                 raise DropboxExtractionInfrastructureError(
                     "Riviera returned an invalid extraction status."
@@ -424,9 +624,12 @@ class DropboxClient:
             self._sleeper(min(delay, remaining))
             delay = min(delay * 2, 10.0)
 
-    def _check_markdown_job(self, job_id: str) -> GetMarkdownAsyncCheckResult:
+    def _check_markdown_job(
+        self, job_id: str, *, client: Any | None = None
+    ) -> GetMarkdownAsyncCheckResult:
+        sdk_client = client or self._client
         try:
-            return self._client.riviera_get_markdown_async_check(job_id)
+            return sdk_client.riviera_get_markdown_async_check(job_id)
         except (AuthError, BadInputError) as exc:
             self._raise_auth_or_refresh_error(exc, required_scope="files.content.read")
         except RateLimitError as exc:
@@ -549,22 +752,32 @@ class DropboxClient:
         return "required scope" in message and required_scope.lower() in message
 
     @staticmethod
-    def _to_page(result: ListFolderResult) -> DropboxPage:
+    def _to_page(result: ListFolderResult, namespace: NamespaceInfo | None = None) -> DropboxPage:
         return DropboxPage(
             entries=list(result.entries),
             cursor=result.cursor,
             has_more=result.has_more,
+            namespace=namespace,
         )
 
     @staticmethod
-    def _to_shared_links_page(result: ListSharedLinksResult) -> SharedLinksPage:
+    def _to_shared_links_page(
+        result: ListSharedLinksResult, namespace: NamespaceInfo | None = None
+    ) -> SharedLinksPage:
         return SharedLinksPage(
-            links=list(result.links), cursor=result.cursor, has_more=result.has_more
+            links=list(result.links),
+            cursor=result.cursor,
+            has_more=result.has_more,
+            namespace=namespace,
         )
 
     @staticmethod
-    def _to_shared_folders_page(result: ListFoldersResult) -> SharedFoldersPage:
-        return SharedFoldersPage(entries=list(result.entries), cursor=result.cursor)
+    def _to_shared_folders_page(
+        result: ListFoldersResult, namespace: NamespaceInfo | None = None
+    ) -> SharedFoldersPage:
+        return SharedFoldersPage(
+            entries=list(result.entries), cursor=result.cursor, namespace=namespace
+        )
 
     @staticmethod
     def _to_shared_folder_members_page(
@@ -576,3 +789,103 @@ class DropboxClient:
             invitees=list(result.invitees or []),
             cursor=result.cursor,
         )
+
+    def _iter_namespace_clients(self) -> Iterator[tuple[NamespaceInfo | None, Any]]:
+        if not self.is_multi_namespace:
+            yield None, self._client
+            return
+        for namespace in getattr(self, "_namespaces", []):
+            yield namespace, self._namespace_clients[namespace.namespace_id]
+
+    def _client_for_namespace(self, namespace_id: str | None) -> Any:
+        if namespace_id is None:
+            return self._client
+        try:
+            return self._namespace_clients[namespace_id]
+        except KeyError as exc:
+            raise DropboxNamespaceError(
+                f"Dropbox namespace {namespace_id} is not configured for this sync."
+            ) from exc
+
+    def _resolve_namespaces(self, config: Mapping[str, Any]) -> list[NamespaceInfo]:
+        selection = _namespace_selection(config)
+        mode = selection.get("mode", "current")
+        if mode == "current":
+            return []
+        if mode == "selected":
+            return _selected_namespaces(selection)
+        if mode == "all_accessible":
+            return self._list_accessible_namespaces(config)
+        raise DropboxNamespaceError(
+            "namespace_selection.mode must be one of: current, selected, all_accessible."
+        )
+
+    def _build_namespace_clients(self, config: Mapping[str, Any]) -> dict[str, Any]:
+        clients: dict[str, Any] = {}
+        for namespace in self._namespaces:
+            namespace_config = {
+                **config,
+                "path_root": {"mode": "namespace_id", "namespace_id": namespace.namespace_id},
+            }
+            clients[namespace.namespace_id] = build_dropbox_client(
+                namespace_config, **self._common_kwargs
+            )
+        return clients
+
+    def _list_accessible_namespaces(self, config: Mapping[str, Any]) -> list[NamespaceInfo]:
+        try:
+            team = build_dropbox_team_client(config, **self._common_kwargs)
+            result = team.team_namespaces_list()
+            namespaces = [_namespace_info(entry) for entry in result.namespaces]
+            while result.has_more:
+                result = team.team_namespaces_list_continue(result.cursor)
+                namespaces.extend(_namespace_info(entry) for entry in result.namespaces)
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
+        except RateLimitError as exc:
+            raise DropboxRateLimitError("Dropbox rate limited namespace discovery.") from exc
+        except ApiError as exc:
+            raise DropboxNamespaceError(
+                "Dropbox could not list accessible Business namespaces."
+            ) from exc
+        return sorted(namespaces, key=lambda namespace: namespace.namespace_id)
+
+
+def _namespace_selection(config: Mapping[str, Any]) -> Mapping[str, Any]:
+    selection = config.get("namespace_selection", {"mode": "current"})
+    if selection is None:
+        return {"mode": "current"}
+    if not isinstance(selection, Mapping):
+        raise DropboxNamespaceError("namespace_selection must be an object.")
+    return selection
+
+
+def _selected_namespaces(selection: Mapping[str, Any]) -> list[NamespaceInfo]:
+    values = selection.get("namespace_ids")
+    if not isinstance(values, list) or not values:
+        raise DropboxNamespaceError(
+            "namespace_selection.namespace_ids must contain at least one namespace ID."
+        )
+    namespaces: list[NamespaceInfo] = []
+    seen: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value:
+            raise DropboxNamespaceError("namespace IDs must be non-empty strings.")
+        if value in seen:
+            raise DropboxNamespaceError("namespace IDs must not contain duplicates.")
+        seen.add(value)
+        namespaces.append(NamespaceInfo(namespace_id=value))
+    return sorted(namespaces, key=lambda namespace: namespace.namespace_id)
+
+
+def _namespace_info(entry: Any) -> NamespaceInfo:
+    namespace_id = getattr(entry, "namespace_id", None)
+    if not isinstance(namespace_id, str) or not namespace_id:
+        raise DropboxNamespaceError("Dropbox returned a namespace without a stable ID.")
+    name = getattr(entry, "name", None)
+    namespace_type = getattr(getattr(entry, "namespace_type", None), "_tag", None)
+    return NamespaceInfo(
+        namespace_id=namespace_id,
+        name=name if isinstance(name, str) else None,
+        namespace_type=namespace_type if isinstance(namespace_type, str) else None,
+    )

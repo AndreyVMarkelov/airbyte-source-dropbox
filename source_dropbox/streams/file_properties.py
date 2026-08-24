@@ -8,7 +8,7 @@ from dropbox.files import FileMetadata
 
 from source_dropbox.client import DropboxFilePropertiesError
 from source_dropbox.normalizer import normalize_file_property
-from source_dropbox.streams.base import DropboxStream
+from source_dropbox.streams.base import DropboxStream, with_namespace
 
 
 class FileProperties(DropboxStream):
@@ -62,7 +62,7 @@ class FileProperties(DropboxStream):
                                 f"records for property key {property_key}."
                             )
                         seen[property_key] = record
-                        yield record
+                        yield with_namespace(dict(record), page.namespace)
 
     def _template_name(self, template_id: str) -> str | None:
         template = self.client.get_property_template(template_id)

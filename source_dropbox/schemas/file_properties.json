@@ -11,6 +11,9 @@
   ],
   "properties": {
     "property_key": {"type": "string"},
+    "namespace_id": {"type": ["null", "string"]},
+    "namespace_name": {"type": ["null", "string"]},
+    "namespace_type": {"type": ["null", "string"]},
     "file_id": {"type": "string"},
     "file_name": {"type": "string"},
     "path_lower": {"type": ["null", "string"]},

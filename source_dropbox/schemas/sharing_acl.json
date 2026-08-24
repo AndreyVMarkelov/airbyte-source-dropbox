@@ -10,6 +10,9 @@
   ],
   "properties": {
     "acl_key": {"type": "string"},
+    "namespace_id": {"type": ["null", "string"]},
+    "namespace_name": {"type": ["null", "string"]},
+    "namespace_type": {"type": ["null", "string"]},
     "resource_id": {"type": "string"},
     "resource_type": {"type": "string", "enum": ["shared_folder"]},
     "path_lower": {"type": ["null", "string"]},

@@ -7,7 +7,7 @@ from typing import Any
 from airbyte_cdk.models import SyncMode
 from dropbox.files import Metadata
 
-from source_dropbox.streams.base import DropboxStream
+from source_dropbox.streams.base import DropboxStream, with_namespace
 
 
 class SnapshotStream(DropboxStream, ABC):
@@ -33,7 +33,7 @@ class SnapshotStream(DropboxStream, ABC):
             for entry in page.entries:
                 record = self.normalize_snapshot_entry(entry)
                 if record is not None:
-                    yield record
+                    yield with_namespace(dict(record), page.namespace)
 
     @abstractmethod
     def normalize_snapshot_entry(self, entry: Metadata) -> Mapping[str, Any] | None:

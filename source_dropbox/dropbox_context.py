@@ -39,6 +39,12 @@ def build_dropbox_client(config: Mapping[str, Any], **kwargs: Any) -> Any:
     return _apply_path_root(base, config)
 
 
+def build_dropbox_team_client(config: Mapping[str, Any], **kwargs: Any) -> Any:
+    """Build a DropboxTeam client for Business namespace discovery."""
+    credentials = _credentials(config)
+    return _team_client(credentials, **kwargs)
+
+
 def context_key(config: Mapping[str, Any]) -> DropboxContextKey:
     team_context = _team_context(config)
     path_root = _path_root(config)
