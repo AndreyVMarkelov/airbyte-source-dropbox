@@ -1,6 +1,6 @@
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from dropbox.exceptions import (
@@ -42,6 +42,21 @@ def test_refresh_token_authentication_uses_app_key() -> None:
     }
     client = DropboxClient(config)
     assert client._client is not None
+
+
+def test_destination_client_uses_root_aware_context_builder() -> None:
+    sdk = Mock()
+    config = {
+        "credentials": {"auth_type": "access_token", "access_token": "token"},
+        "team_context": {"mode": "user", "select_user": "dbmid:member"},
+        "path_root": {"mode": "namespace_id", "namespace_id": "ns:123"},
+    }
+
+    with patch("destination_dropbox.client.build_dropbox_client", return_value=sdk) as builder:
+        client = DropboxClient(config)
+
+    assert client._client is sdk
+    builder.assert_called_once_with(config, max_retries_on_error=0, max_retries_on_rate_limit=0)
 
 
 def test_current_account_classifies_errors() -> None:

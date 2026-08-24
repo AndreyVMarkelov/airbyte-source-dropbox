@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from dropbox.exceptions import ApiError, InternalServerError, RateLimitError
@@ -28,6 +28,21 @@ def _client() -> DropboxFilesClient:
     )
     client._client = Mock()
     return client
+
+
+def test_native_destination_client_uses_root_aware_context_builder() -> None:
+    sdk = Mock()
+    config = {
+        "credentials": {"auth_type": "access_token", "access_token": "token"},
+        "team_context": {"mode": "user", "select_user": "dbmid:member"},
+        "path_root": {"mode": "namespace_id", "namespace_id": "ns:123"},
+    }
+
+    with patch("destination_dropbox_files.client.build_dropbox_client", return_value=sdk) as builder:
+        client = DropboxFilesClient(config)
+
+    assert client._client is sdk
+    builder.assert_called_once_with(config, max_retries_on_error=0, max_retries_on_rate_limit=0)
 
 
 def test_streams_staged_file_in_session_chunks_and_commits(tmp_path: Path) -> None:

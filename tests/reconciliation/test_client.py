@@ -35,15 +35,26 @@ def test_clients_are_built_from_independent_credentials(monkeypatch: pytest.Monk
     monkeypatch.setattr(reconciliation_client, "build_dropbox_client", factory)
 
     DropboxReconciliationClient(
-        {"credentials": {"auth_type": "access_token", "access_token": "source-token"}}, "source"
+        {
+            "credentials": {"auth_type": "access_token", "access_token": "source-token"},
+            "team_context": {"mode": "user", "select_user": "dbmid:source"},
+            "path_root": {"mode": "namespace_id", "namespace_id": "ns:source"},
+        },
+        "source",
     )
     DropboxReconciliationClient(
-        {"credentials": {"auth_type": "access_token", "access_token": "destination-token"}},
+        {
+            "credentials": {"auth_type": "access_token", "access_token": "destination-token"},
+            "team_context": {"mode": "admin", "select_admin": "dbmid:destination"},
+            "path_root": {"mode": "namespace_id", "namespace_id": "ns:destination"},
+        },
         "destination",
     )
 
     assert factory.call_args_list[0].args[0]["credentials"]["access_token"] == "source-token"
+    assert factory.call_args_list[0].args[0]["path_root"]["namespace_id"] == "ns:source"
     assert factory.call_args_list[1].args[0]["credentials"]["access_token"] == "destination-token"
+    assert factory.call_args_list[1].args[0]["path_root"]["namespace_id"] == "ns:destination"
 
 
 def test_inventory_paginates_and_excludes_non_files(monkeypatch: pytest.MonkeyPatch) -> None:

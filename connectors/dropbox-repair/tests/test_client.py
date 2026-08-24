@@ -1,6 +1,6 @@
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 from dropbox.exceptions import ApiError, InternalServerError
@@ -117,3 +117,18 @@ def test_empty_access_token_is_rejected_before_sdk_construction() -> None:
         DropboxRepairClient(
             {"credentials": {"auth_type": "access_token", "access_token": ""}}, "source"
         )
+
+
+def test_repair_client_uses_root_aware_context_builder() -> None:
+    sdk = Mock()
+    config = {
+        "credentials": {"auth_type": "access_token", "access_token": "token"},
+        "team_context": {"mode": "user", "select_user": "dbmid:member"},
+        "path_root": {"mode": "namespace_id", "namespace_id": "ns:123"},
+    }
+
+    with patch("dropbox_repair.client.build_dropbox_client", return_value=sdk) as builder:
+        client = DropboxRepairClient(config, "source")
+
+    assert client._client is sdk
+    builder.assert_called_once_with(config, max_retries_on_error=0, max_retries_on_rate_limit=0)
