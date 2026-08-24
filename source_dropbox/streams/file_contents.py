@@ -48,6 +48,7 @@ class FileContents(DropboxStream, CheckpointMixin):
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._state: dict[str, Any] = {"version": STATE_VERSION, "files": {}}
+        self._context_scope = _client_context_scope(self.client)
         self._pending_files: dict[str, FileMetadata] = {}
 
     @property
@@ -70,17 +71,21 @@ class FileContents(DropboxStream, CheckpointMixin):
 
     @property
     def state(self) -> MutableMapping[str, Any]:
-        return {
+        state: dict[str, Any] = {
             "version": STATE_VERSION,
             "files": {
                 file_id: self._state["files"][file_id]
                 for file_id in sorted(self._state["files"])
             },
         }
+        context = self._context_scope
+        if _requires_context_scope(context):
+            state["context"] = context
+        return state
 
     @state.setter
     def state(self, value: MutableMapping[str, Any]) -> None:
-        self._state = _validate_state(value or {})
+        self._state = _validate_state(value or {}, self._context_scope)
 
     def stream_slices(
         self,
@@ -205,11 +210,27 @@ def _version_for(entry: FileMetadata) -> FileVersion:
     return FileVersion(rev=entry.rev, content_hash=entry.content_hash, path=entry.path_lower)
 
 
-def _validate_state(value: Mapping[str, Any]) -> dict[str, Any]:
+def _validate_state(
+    value: Mapping[str, Any], expected_context: Mapping[str, Any]
+) -> dict[str, Any]:
     if not value:
-        return {"version": STATE_VERSION, "files": {}}
+        state: dict[str, Any] = {"version": STATE_VERSION, "files": {}}
+        if _requires_context_scope(expected_context):
+            state["context"] = expected_context
+        return state
     if value.get("version") != STATE_VERSION:
         raise ValueError("file_contents state has an unsupported version.")
+    incoming_context = value.get("context")
+    if incoming_context is None:
+        if _requires_context_scope(expected_context):
+            raise ValueError(
+                "file_contents state was created without Dropbox team/path root context; "
+                "reset state before using a non-default Dropbox context."
+            )
+    elif not isinstance(incoming_context, Mapping) or dict(incoming_context) != expected_context:
+        raise ValueError(
+            "file_contents state Dropbox team/path root context does not match the current config."
+        )
     files = value.get("files")
     if not isinstance(files, Mapping):
         raise ValueError("file_contents state must contain a files object.")
@@ -229,10 +250,27 @@ def _validate_state(value: Mapping[str, Any]) -> dict[str, Any]:
         if path is not None and not isinstance(path, str):
             raise ValueError("file_contents state path must be a string or null.")
         normalized[file_id] = {"rev": rev, "content_hash": content_hash, "path": path}
-    return {
+    state = {
         "version": STATE_VERSION,
         "files": {file_id: normalized[file_id] for file_id in sorted(normalized)},
     }
+    if _requires_context_scope(expected_context):
+        state["context"] = expected_context
+    return state
+
+
+def _requires_context_scope(context: Mapping[str, Any]) -> bool:
+    return context != {"team_mode": "none", "path_root_mode": "default"}
+
+
+def _client_context_scope(client: Any) -> dict[str, Any]:
+    try:
+        context = client.context_scope()
+    except AttributeError:
+        context = None
+    if isinstance(context, Mapping):
+        return dict(context)
+    return {"team_mode": "none", "path_root_mode": "default"}
 
 
 def _isoformat_utc(value: object) -> str | None:

@@ -389,6 +389,74 @@ def test_file_contents_state_validation_and_deterministic_serialization() -> Non
             stream.state = bad_state
 
 
+def test_file_contents_state_binds_non_default_dropbox_context() -> None:
+    config = {
+        **CONFIG,
+        "path_root": {"mode": "namespace_id", "namespace_id": "123"},
+    }
+    client = Mock()
+    client.context_scope.return_value = {
+        "team_mode": "none",
+        "path_root_mode": "namespace_id",
+        "namespace_id": "123",
+    }
+    stream = FileContents(client, config)
+    stream.state = {
+        "version": 1,
+        "context": {"team_mode": "none", "path_root_mode": "namespace_id", "namespace_id": "123"},
+        "files": {"id:file": {"rev": "r", "content_hash": "h", "path": "/a.pdf"}},
+    }
+
+    assert stream.state["context"] == {
+        "team_mode": "none",
+        "path_root_mode": "namespace_id",
+        "namespace_id": "123",
+    }
+
+
+def test_file_contents_state_rejects_missing_context_for_non_default_dropbox_context() -> None:
+    config = {
+        **CONFIG,
+        "path_root": {"mode": "namespace_id", "namespace_id": "123"},
+    }
+    client = Mock()
+    client.context_scope.return_value = {
+        "team_mode": "none",
+        "path_root_mode": "namespace_id",
+        "namespace_id": "123",
+    }
+    stream = FileContents(client, config)
+
+    with pytest.raises(ValueError, match="team/path root context"):
+        stream.state = {
+            "version": 1,
+            "files": {"id:file": {"rev": "r", "content_hash": "h", "path": "/a.pdf"}},
+        }
+
+
+def test_file_contents_state_rejects_changed_resolved_root_namespace() -> None:
+    client = Mock()
+    client.context_scope.return_value = {
+        "team_mode": "user",
+        "selected_member_id": "dbmid:member",
+        "path_root_mode": "root",
+        "namespace_id": "222",
+    }
+    stream = FileContents(client, CONFIG)
+
+    with pytest.raises(ValueError, match="context does not match"):
+        stream.state = {
+            "version": 1,
+            "context": {
+                "team_mode": "user",
+                "selected_member_id": "dbmid:member",
+                "path_root_mode": "root",
+                "namespace_id": "111",
+            },
+            "files": {"id:file": {"rev": "r", "content_hash": "h", "path": "/a.pdf"}},
+        }
+
+
 def _riviera_client(clock: Mock, sleeper: Mock) -> tuple[DropboxClient, Mock]:
     client = DropboxClient.__new__(DropboxClient)
     client._client = Mock()

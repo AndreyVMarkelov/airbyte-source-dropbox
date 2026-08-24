@@ -320,7 +320,7 @@ def test_client_lists_file_properties_with_property_groups_and_pagination() -> N
     )
     sdk.files_list_folder_continue.return_value = Mock(entries=[], cursor="done", has_more=False)
 
-    with patch("source_dropbox.client.dropbox.Dropbox", return_value=sdk):
+    with patch("source_dropbox.dropbox_context.dropbox.Dropbox", return_value=sdk):
         client = DropboxClient(CONFIG)
         pages = list(
             client.iter_entries_with_property_groups(path="/Contracts", recursive=False)

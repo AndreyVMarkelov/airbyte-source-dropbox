@@ -875,6 +875,104 @@ def test_scope_mismatch_fails_before_delete_controls_are_planned() -> None:
     assert "id:file" in cursor.get_state()["files"]
 
 
+def test_path_root_context_is_bound_into_file_transfer_state_scope() -> None:
+    cursor = _cursor()
+    plan = cursor.plan_inventory(
+        [_file()],
+        rename_policy="ignore",
+        delete_policy="ignore",
+        path="/Exports",
+        recursive=True,
+        context={"path_root": {"mode": "namespace_id", "namespace_id": "123"}},
+    )
+    assert plan.files == [_file()]
+    cursor.add_file(_file())
+
+    assert cursor.get_state()["scope"] == {
+        "path": "/Exports",
+        "recursive": True,
+        "context": {
+            "team_mode": "none",
+            "path_root_mode": "namespace_id",
+            "namespace_id": "123",
+        },
+    }
+
+
+def test_path_root_context_mismatch_fails_before_delete_controls_are_planned() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 3,
+            "scope": {
+                "path": "/Exports",
+                "recursive": True,
+                "context": {
+                    "team_mode": "none",
+                    "path_root_mode": "namespace_id",
+                    "namespace_id": "123",
+                },
+            },
+            "cursor": "cursor-1",
+            "files": {
+                "id:file": {"path": "report.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="scope does not match"):
+        cursor.plan_inventory(
+            [],
+            rename_policy="ignore",
+            delete_policy="delete",
+            path="/Exports",
+            recursive=True,
+            context={"path_root": {"mode": "namespace_id", "namespace_id": "456"}},
+        )
+
+    assert "id:file" in cursor.get_state()["files"]
+
+
+def test_resolved_root_namespace_mismatch_fails_before_delete_controls_are_planned() -> None:
+    cursor = _cursor()
+    cursor.set_initial_state(
+        {
+            "version": 3,
+            "scope": {
+                "path": "/Exports",
+                "recursive": True,
+                "context": {
+                    "team_mode": "user",
+                    "selected_member_id": "dbmid:member",
+                    "path_root_mode": "root",
+                    "namespace_id": "111",
+                },
+            },
+            "cursor": "cursor-1",
+            "files": {
+                "id:file": {"path": "report.pdf", "rev": "r1", "content_hash": "h1"}
+            },
+        }
+    )
+
+    with pytest.raises(ValueError, match="scope does not match"):
+        cursor.plan_inventory(
+            [],
+            rename_policy="ignore",
+            delete_policy="delete",
+            path="/Exports",
+            recursive=True,
+            context={
+                "team_mode": "user",
+                "selected_member_id": "dbmid:member",
+                "path_root_mode": "root",
+                "namespace_id": "222",
+            },
+        )
+
+    assert "id:file" in cursor.get_state()["files"]
+
+
 def test_scope_mismatch_resets_non_propagating_incremental_state() -> None:
     cursor = _cursor()
     cursor.set_initial_state(

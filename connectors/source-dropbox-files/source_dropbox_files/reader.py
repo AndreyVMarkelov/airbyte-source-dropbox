@@ -9,7 +9,6 @@ from pathlib import Path
 from time import sleep
 from typing import Any
 
-import dropbox
 from airbyte_cdk import FailureType
 from airbyte_cdk.sources.file_based.file_based_stream_reader import (
     AbstractFileBasedStreamReader,
@@ -28,6 +27,7 @@ from dropbox.exceptions import (
 from dropbox.files import FileMetadata
 from pydantic.v1 import PrivateAttr
 
+from source_dropbox_files.dropbox_context import build_dropbox_client, effective_context_key
 from source_dropbox_files.spec import SourceDropboxFilesSpec
 
 MAX_RETRIES = 3
@@ -128,6 +128,10 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         self._sleeper = sleeper
         self._client: Any = None
         self.last_cursor: str | None = None
+        self._context_scope: dict[str, Any] = {
+            "team_mode": "none",
+            "path_root_mode": "default",
+        }
 
     @property
     def config(self) -> SourceDropboxFilesSpec:
@@ -138,18 +142,14 @@ class SourceDropboxFilesStreamReader(AbstractFileBasedStreamReader):
         if not isinstance(value, SourceDropboxFilesSpec):
             raise TypeError("Expected SourceDropboxFilesSpec.")
         self._config = value
-        credentials = value.credentials
         common_kwargs = {"max_retries_on_error": 0, "max_retries_on_rate_limit": 0}
-        if credentials.auth_type == "oauth2_pkce":
-            self._client = dropbox.Dropbox(
-                oauth2_refresh_token=credentials.refresh_token,
-                app_key=credentials.app_key,
-                **common_kwargs,
-            )
-        else:
-            self._client = dropbox.Dropbox(
-                oauth2_access_token=credentials.access_token, **common_kwargs
-            )
+        raw_config = value.dict(exclude_none=True)
+        self._client = build_dropbox_client(raw_config, **common_kwargs)
+        self._context_scope = effective_context_key(raw_config, self._client).as_state_scope()
+
+    @property
+    def context_scope(self) -> dict[str, Any]:
+        return dict(self._context_scope)
 
     def get_matching_files(
         self, globs: list[str], prefix: str | None, logger: logging.Logger

@@ -74,6 +74,7 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
                 delete_policy=self.stream_reader.config.delete_policy,
                 path=self.stream_reader.config.path,
                 recursive=self.stream_reader.config.recursive,
+                context=_reader_context_scope(self.stream_reader),
             )
             return [
                 {
@@ -96,6 +97,7 @@ class DropboxIncrementalFileTransferStream(DefaultFileBasedStream):
             delete_policy=self.stream_reader.config.delete_policy,
             path=self.stream_reader.config.path,
             recursive=self.stream_reader.config.recursive,
+            context=_reader_context_scope(self.stream_reader),
         )
         files = [
             file for file in plan.files if getattr(file, "id", None) in transfer_file_ids
@@ -182,6 +184,8 @@ class SourceDropboxFiles(FileBasedSource):
             self.stream_reader.current_account()
         except AirbyteTracedException as exc:
             return False, exc.message
+        except Exception as exc:
+            return False, f"Unable to connect to Dropbox: {exc}"
         return super().check_connection(logger, config)
 
     def _make_default_stream(self, *args: Any, **kwargs: Any) -> DefaultFileBasedStream:
@@ -206,3 +210,13 @@ def _is_error_log(message: Any) -> bool:
         getattr(message, "type", None) == Type.LOG
         and getattr(getattr(message, "log", None), "level", None) == Level.ERROR
     )
+
+
+def _reader_context_scope(reader: Any) -> Mapping[str, Any]:
+    try:
+        context = reader.context_scope
+    except AttributeError:
+        context = None
+    if isinstance(context, Mapping):
+        return context
+    return {"team_mode": "none", "path_root_mode": "default"}

@@ -4,7 +4,6 @@ from collections.abc import Callable, Mapping
 from time import sleep
 from typing import Any
 
-import dropbox
 from dropbox.exceptions import (
     ApiError,
     AuthError,
@@ -24,6 +23,7 @@ from dropbox.files import (
     WriteMode,
 )
 
+from destination_dropbox_files.dropbox_context import build_dropbox_client
 from destination_dropbox_files.validation import PropagationOperation, StagedFile
 
 
@@ -41,12 +41,8 @@ class DropboxFilesConflictError(DropboxFilesWriteError):
 
 class DropboxFilesClient:
     def __init__(self, config: Mapping[str, Any], *, sleeper: Callable[[float], None] = sleep) -> None:
-        credentials = config["credentials"]
         kwargs = {"max_retries_on_error": 0, "max_retries_on_rate_limit": 0}
-        if credentials["auth_type"] == "oauth2_pkce":
-            self._client = dropbox.Dropbox(oauth2_refresh_token=credentials["refresh_token"], app_key=credentials["app_key"], **kwargs)
-        else:
-            self._client = dropbox.Dropbox(oauth2_access_token=credentials["access_token"], **kwargs)
+        self._client = build_dropbox_client(config, **kwargs)
         self._chunk_size = int(config.get("upload_chunk_size_mb", 8)) * 1024 * 1024
         if not 1024 * 1024 <= self._chunk_size <= 16 * 1024 * 1024:
             raise DropboxFilesWriteError("upload_chunk_size_mb must be between 1 and 16.")

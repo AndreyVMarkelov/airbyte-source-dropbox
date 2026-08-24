@@ -4,7 +4,6 @@ from collections.abc import Callable, Mapping
 from time import sleep
 from typing import Any, NoReturn, TypeVar
 
-import dropbox
 from dropbox.exceptions import (
     ApiError,
     AuthError,
@@ -25,6 +24,7 @@ from dropbox.files import (
 )
 
 from destination_dropbox.validation import ValidatedFileRecord, normalize_upload_settings
+from source_dropbox.dropbox_context import build_dropbox_client
 
 T = TypeVar("T")
 MAX_REQUEST_RETRIES = 3
@@ -61,21 +61,8 @@ class DropboxClient:
     def __init__(
         self, config: Mapping[str, Any], *, sleeper: Callable[[float], None] = sleep
     ) -> None:
-        credentials = config["credentials"]
-        auth_type = credentials["auth_type"]
         common_kwargs = {"max_retries_on_error": 0, "max_retries_on_rate_limit": 0}
-        if auth_type == "oauth2_pkce":
-            self._client = dropbox.Dropbox(
-                oauth2_refresh_token=credentials["refresh_token"],
-                app_key=credentials["app_key"],
-                **common_kwargs,
-            )
-        elif auth_type == "access_token":
-            self._client = dropbox.Dropbox(
-                oauth2_access_token=credentials["access_token"], **common_kwargs
-            )
-        else:
-            raise ValueError(f"Unsupported auth_type: {auth_type}")
+        self._client = build_dropbox_client(config, **common_kwargs)
         self._ensured_folders: set[str] = set()
         self._upload_settings = normalize_upload_settings(config)
         self._sleeper = sleeper

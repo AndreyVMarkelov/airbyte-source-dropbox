@@ -59,6 +59,46 @@ class FileTransferSettings(BaseModel):
     )
 
 
+class TeamContext(BaseModel):
+    mode: Literal["none", "user", "admin"] = Field(
+        "none",
+        title="Team Context",
+        description=(
+            "Use none for personal/current account, user to select a team member, "
+            "or admin to select an admin context."
+        ),
+    )
+    select_user: str | None = Field(
+        None,
+        title="Select member",
+        description=(
+            "Dropbox Business team member ID, for example dbmid:..., used when mode is user."
+        ),
+    )
+    select_admin: str | None = Field(
+        None,
+        title="Select admin",
+        description=(
+            "Dropbox Business admin member ID, for example dbmid:..., used when mode is admin."
+        ),
+    )
+
+
+class PathRootConfig(BaseModel):
+    mode: Literal["default", "home", "root", "namespace_id"] = Field(
+        "default",
+        title="Dropbox root",
+        description=(
+            "Use default behavior, member home, account/team root, or an explicit namespace ID."
+        ),
+    )
+    namespace_id: str | None = Field(
+        None,
+        title="Namespace ID",
+        description="Explicit Dropbox namespace/root ID used when mode is namespace_id.",
+    )
+
+
 class SourceDropboxFilesSpec(AbstractFileBasedSpec):
     class Config:
         title = "Dropbox Files Source Spec"
@@ -72,6 +112,8 @@ class SourceDropboxFilesSpec(AbstractFileBasedSpec):
         description="Dropbox folder path to transfer. Use an empty string for the app root.",
     )
     recursive: bool = Field(True, title="Recursive")
+    team_context: TeamContext = Field(default_factory=TeamContext, title="Dropbox Business context")
+    path_root: PathRootConfig = Field(default_factory=PathRootConfig, title="Path Root")
     rename_policy: Literal["ignore", "propagate"] = Field(
         "ignore",
         title="Rename Policy",

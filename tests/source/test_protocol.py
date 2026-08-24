@@ -246,6 +246,28 @@ def test_normalization_failure_releases_page_cache() -> None:
     assert stream.state == {}
 
 
+def test_entries_state_rejects_changed_resolved_root_namespace() -> None:
+    client = Mock()
+    client.context_scope.return_value = {
+        "team_mode": "user",
+        "selected_member_id": "dbmid:member",
+        "path_root_mode": "root",
+        "namespace_id": "222",
+    }
+    stream = Entries(client, CONFIG)
+
+    with pytest.raises(ValueError, match="context does not match"):
+        stream.state = {
+            "cursor": "saved",
+            "context": {
+                "team_mode": "user",
+                "selected_member_id": "dbmid:member",
+                "path_root_mode": "root",
+                "namespace_id": "111",
+            },
+        }
+
+
 def test_cursor_reset_restart_is_reflected_in_airbyte_messages() -> None:
     page = DropboxPage(entries=[Mock()], cursor="fresh-page", has_more=False)
     client = DropboxClient.__new__(DropboxClient)

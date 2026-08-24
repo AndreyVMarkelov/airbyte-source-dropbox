@@ -27,6 +27,59 @@ python -m source_dropbox.oauth authorize --app-key <APP_KEY>
 
 The helper defaults to all connector scopes. Use `--scope-preset core` or `--scope-preset core+sharing` to request less. Use `--scope-preset migration` for native Dropbox-to-Dropbox file transfer; it requests content read and write scopes. Connection checking requires only core credentials; missing optional scopes fail only when their corresponding streams are selected. An access token remains available as an explicit development/manual option.
 
+## Dropbox Business context and Path Root
+
+All Dropbox connectors in this repository accept the same optional context
+settings:
+
+```json
+{
+  "team_context": {
+    "mode": "none"
+  },
+  "path_root": {
+    "mode": "default"
+  }
+}
+```
+
+`team_context.mode` controls Dropbox Business impersonation:
+
+- `none` uses the current personal account or already-selected app context.
+- `user` requires `select_user` with a Dropbox team member ID such as
+  `dbmid:...`; SDK calls run as that member.
+- `admin` requires `select_admin` with a Dropbox team admin member ID such as
+  `dbmid:...`; SDK calls run as that admin.
+
+Team modes require a Dropbox Business app/token that is authorized for team
+access and for the same endpoint scopes used by the selected connector streams.
+Optional stream scopes remain local: for example, `sharing.read` is still only
+required for sharing streams, and `files.content.read` is still only required
+for content/file-transfer source behavior.
+
+`path_root.mode` controls which Dropbox namespace paths resolve against:
+
+- `default` leaves Dropbox SDK path-root behavior unchanged.
+- `home` uses the selected account's home namespace.
+- `root` uses the selected account's root namespace.
+- `namespace_id` requires `namespace_id` and uses that explicit Dropbox
+  namespace/root ID.
+
+For Business migrations, configure source and destination contexts
+independently. A common pattern is:
+
+```json
+{
+  "team_context": {"mode": "user", "select_user": "dbmid:SOURCE_MEMBER"},
+  "path_root": {"mode": "root"}
+}
+```
+
+Incremental source state is bound to the selected team/path-root context when a
+non-default context is used. Reusing a cursor or file-transfer state with a
+different team member, admin, or Path Root fails closed; reset state when
+intentionally changing namespaces.
+
 ## Native file-transfer acceptance test
 
 The opt-in end-to-end profile pipes `source-dropbox-files` native file references directly to `destination-dropbox-files`. It expects the configured source root to contain `small.bin` and `nested/large-65mb.bin`; the latter is intentionally above the old 64 MiB in-memory limit. Set `DROPBOX_TRANSFER_SOURCE_CONFIG` and `DROPBOX_TRANSFER_DESTINATION_CONFIG` to local JSON configuration files, then run:

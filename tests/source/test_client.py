@@ -19,7 +19,7 @@ ACCESS_TOKEN_CONFIG = {
 
 
 def test_access_token_client_enables_sdk_retries() -> None:
-    with patch("source_dropbox.client.dropbox.Dropbox") as dropbox_client:
+    with patch("source_dropbox.dropbox_context.dropbox.Dropbox") as dropbox_client:
         DropboxClient(ACCESS_TOKEN_CONFIG)
 
     dropbox_client.assert_called_once_with(
@@ -27,6 +27,62 @@ def test_access_token_client_enables_sdk_retries() -> None:
         max_retries_on_error=5,
         max_retries_on_rate_limit=5,
     )
+
+
+def test_select_user_client_construction_applies_member_context() -> None:
+    team = Mock()
+    user_client = Mock()
+    team.as_user.return_value = user_client
+    with patch("source_dropbox.dropbox_context.dropbox.DropboxTeam", return_value=team):
+        client = DropboxClient(
+            {
+                **ACCESS_TOKEN_CONFIG,
+                "team_context": {"mode": "user", "select_user": "dbmid:member"},
+            }
+        )
+
+    team.as_user.assert_called_once_with("dbmid:member")
+    assert client._client is user_client
+
+
+def test_path_root_namespace_is_applied_to_client() -> None:
+    base = Mock()
+    rooted = Mock()
+    base.with_path_root.return_value = rooted
+    with patch("source_dropbox.dropbox_context.dropbox.Dropbox", return_value=base):
+        client = DropboxClient(
+            {
+                **ACCESS_TOKEN_CONFIG,
+                "path_root": {"mode": "namespace_id", "namespace_id": "12345"},
+            }
+        )
+
+    base.with_path_root.assert_called_once()
+    assert client._client is rooted
+
+
+def test_home_path_root_resolves_account_root_info() -> None:
+    base = Mock()
+    rooted = Mock()
+    base.with_path_root.return_value = rooted
+    base.users_get_current_account.return_value = SimpleNamespace(
+        root_info=SimpleNamespace(home_namespace_id="home", root_namespace_id="root")
+    )
+    rooted.users_get_current_account.return_value = SimpleNamespace(
+        root_info=SimpleNamespace(home_namespace_id="home", root_namespace_id="root")
+    )
+    with patch("source_dropbox.dropbox_context.dropbox.Dropbox", return_value=base):
+        client = DropboxClient({**ACCESS_TOKEN_CONFIG, "path_root": {"mode": "home"}})
+
+    base.users_get_current_account.assert_called_once()
+    rooted.users_get_current_account.assert_called_once()
+    base.with_path_root.assert_called_once()
+    assert client._client is rooted
+    assert client.context_scope() == {
+        "team_mode": "none",
+        "path_root_mode": "home",
+        "namespace_id": "home",
+    }
 
 
 def test_current_account_classifies_authentication_errors() -> None:
