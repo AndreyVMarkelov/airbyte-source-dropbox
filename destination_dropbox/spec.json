@@ -119,71 +119,181 @@
         "default": "preserve"
       },
       "team_context": {
-        "title": "Dropbox Business context",
+        "title": "Dropbox Business",
         "description": "Optional Dropbox Business member/admin context. Leave as none for personal accounts and ordinary user-linked tokens.",
         "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "mode": {
-            "title": "Team context mode",
-            "type": "string",
-            "enum": [
-              "none",
-              "user",
-              "admin"
+        "oneOf": [
+          {
+            "title": "Use current account",
+            "required": [
+              "mode"
             ],
-            "default": "none"
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Team context mode",
+                "type": "string",
+                "const": "none",
+                "default": "none"
+              },
+              "select_user": {
+                "title": "Legacy selected member",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              },
+              "select_admin": {
+                "title": "Legacy selected admin",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              }
+            }
           },
-          "select_user": {
-            "title": "Select member",
-            "description": "Dropbox Business member ID, for example dbmid:..., used when mode is user.",
-            "type": [
-              "null",
-              "string"
+          {
+            "title": "Act as team member",
+            "required": [
+              "mode",
+              "select_user"
             ],
-            "default": null
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Team context mode",
+                "type": "string",
+                "const": "user"
+              },
+              "select_user": {
+                "title": "Select member",
+                "description": "Dropbox Business team member ID, for example dbmid:...",
+                "type": "string"
+              },
+              "select_admin": {
+                "title": "Legacy selected admin",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              }
+            }
           },
-          "select_admin": {
-            "title": "Select admin",
-            "description": "Dropbox Business admin member ID, for example dbmid:..., used when mode is admin.",
-            "type": [
-              "null",
-              "string"
+          {
+            "title": "Act as team admin",
+            "required": [
+              "mode",
+              "select_admin"
             ],
-            "default": null
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Team context mode",
+                "type": "string",
+                "const": "admin"
+              },
+              "select_admin": {
+                "title": "Select admin",
+                "description": "Dropbox Business admin member ID, for example dbmid:...",
+                "type": "string"
+              },
+              "select_user": {
+                "title": "Legacy selected member",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              }
+            }
           }
-        },
+        ],
         "default": {
           "mode": "none"
         }
       },
       "path_root": {
-        "title": "Dropbox root",
+        "title": "Dropbox Root",
         "description": "Optional Dropbox Path Root. Use default behavior, member home, account/team root, or an explicit namespace ID.",
         "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "mode": {
-            "title": "Root mode",
-            "type": "string",
-            "enum": [
-              "default",
-              "home",
-              "root",
+        "oneOf": [
+          {
+            "title": "Default Dropbox root",
+            "required": [
+              "mode"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Root mode",
+                "type": "string",
+                "const": "default",
+                "default": "default"
+              },
+              "namespace_id": {
+                "title": "Legacy namespace ID",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              }
+            }
+          },
+          {
+            "title": "Member home",
+            "required": [
+              "mode"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Root mode",
+                "type": "string",
+                "const": "home"
+              },
+              "namespace_id": {
+                "title": "Legacy namespace ID",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              }
+            }
+          },
+          {
+            "title": "Team/account root",
+            "required": [
+              "mode"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Root mode",
+                "type": "string",
+                "const": "root"
+              },
+              "namespace_id": {
+                "title": "Legacy namespace ID",
+                "type": "null",
+                "airbyte_hidden": true,
+                "default": null
+              }
+            }
+          },
+          {
+            "title": "Explicit namespace ID",
+            "required": [
+              "mode",
               "namespace_id"
             ],
-            "default": "default"
-          },
-          "namespace_id": {
-            "title": "Namespace ID",
-            "description": "Explicit Dropbox namespace/root ID used when mode is namespace_id.",
-            "type": [
-              "null",
-              "string"
-            ],
-            "default": null
+            "additionalProperties": false,
+            "properties": {
+              "mode": {
+                "title": "Root mode",
+                "type": "string",
+                "const": "namespace_id"
+              },
+              "namespace_id": {
+                "title": "Namespace ID",
+                "description": "Explicit Dropbox namespace/root ID.",
+                "type": "string"
+              }
+            }
           }
-        },
+        ],
         "default": {
           "mode": "default"
         }

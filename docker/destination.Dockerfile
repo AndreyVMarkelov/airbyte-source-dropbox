@@ -8,4 +8,6 @@ COPY destination_dropbox ./destination_dropbox
 
 RUN pip install --no-cache-dir .
 
+ENV AIRBYTE_ENTRYPOINT="destination-dropbox"
+
 ENTRYPOINT ["destination-dropbox"]

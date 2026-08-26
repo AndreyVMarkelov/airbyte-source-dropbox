@@ -59,44 +59,113 @@ class FileTransferSettings(BaseModel):
     )
 
 
-class TeamContext(BaseModel):
-    mode: Literal["none", "user", "admin"] = Field(
-        "none",
-        title="Team Context",
-        description=(
-            "Use none for personal/current account, user to select a team member, "
-            "or admin to select an admin context."
-        ),
-    )
-    select_user: str | None = Field(
+class TeamContextCurrent(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Use current account"
+        discriminator = "mode"
+
+    mode: Literal["none"] = Field("none", const=True, title="Team context mode")
+    select_user: Literal[None] = Field(
         None,
+        title="Legacy selected member",
+        airbyte_hidden=True,
+    )
+    select_admin: Literal[None] = Field(
+        None,
+        title="Legacy selected admin",
+        airbyte_hidden=True,
+    )
+
+
+class TeamContextUser(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Act as team member"
+        discriminator = "mode"
+
+    mode: Literal["user"] = Field("user", const=True, title="Team context mode")
+    select_user: str = Field(
         title="Select member",
-        description=(
-            "Dropbox Business team member ID, for example dbmid:..., used when mode is user."
-        ),
+        description="Dropbox Business team member ID, for example dbmid:...",
     )
-    select_admin: str | None = Field(
+    select_admin: Literal[None] = Field(
         None,
+        title="Legacy selected admin",
+        airbyte_hidden=True,
+    )
+
+
+class TeamContextAdmin(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Act as team admin"
+        discriminator = "mode"
+
+    mode: Literal["admin"] = Field("admin", const=True, title="Team context mode")
+    select_admin: str = Field(
         title="Select admin",
-        description=(
-            "Dropbox Business admin member ID, for example dbmid:..., used when mode is admin."
-        ),
+        description="Dropbox Business admin member ID, for example dbmid:...",
     )
-
-
-class PathRootConfig(BaseModel):
-    mode: Literal["default", "home", "root", "namespace_id"] = Field(
-        "default",
-        title="Dropbox root",
-        description=(
-            "Use default behavior, member home, account/team root, or an explicit namespace ID."
-        ),
-    )
-    namespace_id: str | None = Field(
+    select_user: Literal[None] = Field(
         None,
-        title="Namespace ID",
-        description="Explicit Dropbox namespace/root ID used when mode is namespace_id.",
+        title="Legacy selected member",
+        airbyte_hidden=True,
     )
+
+
+TeamContext = TeamContextCurrent | TeamContextUser | TeamContextAdmin
+
+
+class PathRootDefault(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Default Dropbox root"
+        discriminator = "mode"
+
+    mode: Literal["default"] = Field("default", const=True, title="Root mode")
+    namespace_id: Literal[None] = Field(
+        None,
+        title="Legacy namespace ID",
+        airbyte_hidden=True,
+    )
+
+
+class PathRootHome(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Member home"
+        discriminator = "mode"
+
+    mode: Literal["home"] = Field("home", const=True, title="Root mode")
+    namespace_id: Literal[None] = Field(
+        None,
+        title="Legacy namespace ID",
+        airbyte_hidden=True,
+    )
+
+
+class PathRootRoot(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Team/account root"
+        discriminator = "mode"
+
+    mode: Literal["root"] = Field("root", const=True, title="Root mode")
+    namespace_id: Literal[None] = Field(
+        None,
+        title="Legacy namespace ID",
+        airbyte_hidden=True,
+    )
+
+
+class PathRootNamespace(BaseModel):
+    class Config(OneOfOptionConfig):
+        title = "Explicit namespace ID"
+        discriminator = "mode"
+
+    mode: Literal["namespace_id"] = Field("namespace_id", const=True, title="Root mode")
+    namespace_id: str = Field(
+        title="Namespace ID",
+        description="Explicit Dropbox namespace/root ID.",
+    )
+
+
+PathRootConfig = PathRootDefault | PathRootHome | PathRootRoot | PathRootNamespace
 
 
 class SourceDropboxFilesSpec(AbstractFileBasedSpec):
@@ -112,8 +181,16 @@ class SourceDropboxFilesSpec(AbstractFileBasedSpec):
         description="Dropbox folder path to transfer. Use an empty string for the app root.",
     )
     recursive: bool = Field(True, title="Recursive")
-    team_context: TeamContext = Field(default_factory=TeamContext, title="Dropbox Business context")
-    path_root: PathRootConfig = Field(default_factory=PathRootConfig, title="Path Root")
+    team_context: TeamContext = Field(
+        default_factory=TeamContextCurrent,
+        title="Dropbox Business",
+        discriminator="mode",
+    )
+    path_root: PathRootConfig = Field(
+        default_factory=PathRootDefault,
+        title="Dropbox Root",
+        discriminator="mode",
+    )
     rename_policy: Literal["ignore", "propagate"] = Field(
         "ignore",
         title="Rename Policy",
