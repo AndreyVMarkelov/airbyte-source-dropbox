@@ -353,6 +353,9 @@ def test_file_property_listing_continues_on_each_namespace_rooted_client() -> No
         first,
         second,
     )
+    default.file_properties_templates_list_for_user.return_value = SimpleNamespace(
+        template_ids=["ptid:contract"]
+    )
 
     pages = list(client.iter_entries_with_property_groups(path="/Reports", recursive=True))
 
@@ -364,7 +367,10 @@ def test_file_property_listing_continues_on_each_namespace_rooted_client() -> No
         ("123", ["a2"]),
         ("456", ["b1"]),
     ]
+    default.file_properties_templates_list_for_user.assert_called_once_with()
     default.files_list_folder.assert_not_called()
+    assert first.files_list_folder.call_args.kwargs["include_property_groups"].is_filter_some()
+    assert second.files_list_folder.call_args.kwargs["include_property_groups"].is_filter_some()
     first.files_list_folder_continue.assert_called_once_with("a-next")
     second.files_list_folder_continue.assert_not_called()
 

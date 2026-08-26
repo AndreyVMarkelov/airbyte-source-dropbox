@@ -17,8 +17,10 @@ from dropbox.file_properties import (
     PropertyField,
     PropertyGroup,
     TemplateFilter,
+    TemplateFilterBase,
+    TemplateFilterBase_validator,
 )
-from dropbox.files import DeletedMetadata, FileMetadata, FolderMetadata
+from dropbox.files import DeletedMetadata, FileMetadata, FolderMetadata, ListFolderArg
 from jsonschema import Draft7Validator
 
 from source_dropbox.client import DropboxClient, DropboxFilePropertiesError, DropboxPage
@@ -313,11 +315,23 @@ def test_file_properties_read_through_source_protocol() -> None:
 
 def test_client_lists_file_properties_with_property_groups_and_pagination() -> None:
     sdk = Mock()
-    sdk.files_list_folder.return_value = Mock(
-        entries=[_file(property_groups=[_group("ptid:contract", ("Customer", "Acme"))])],
-        cursor="next",
-        has_more=True,
+    sdk.file_properties_templates_list_for_user.return_value = Mock(
+        template_ids=["ptid:contract"]
     )
+
+    def list_folder(**kwargs: object) -> Mock:
+        # This validates the exact Dropbox SDK generated route argument type.
+        # TemplateFilter.filter_none is a TemplateFilter concrete union value,
+        # but this route expects TemplateFilterBase and rejects it in the
+        # installed SDK.
+        ListFolderArg(**kwargs)
+        return Mock(
+            entries=[_file(property_groups=[_group("ptid:contract", ("Customer", "Acme"))])],
+            cursor="next",
+            has_more=True,
+        )
+
+    sdk.files_list_folder.side_effect = list_folder
     sdk.files_list_folder_continue.return_value = Mock(entries=[], cursor="done", has_more=False)
 
     with patch("source_dropbox.dropbox_context.dropbox.Dropbox", return_value=sdk):
@@ -327,10 +341,54 @@ def test_client_lists_file_properties_with_property_groups_and_pagination() -> N
         )
 
     assert len(pages) == 2
+    sdk.file_properties_templates_list_for_user.assert_called_once_with()
+    sdk.files_list_folder.assert_called_once()
+    include_property_groups = sdk.files_list_folder.call_args.kwargs["include_property_groups"]
+    assert isinstance(include_property_groups, TemplateFilterBase)
+    assert not isinstance(include_property_groups, TemplateFilter)
+    TemplateFilterBase_validator.validate(include_property_groups)
+    assert include_property_groups.is_filter_some()
+    assert include_property_groups.get_filter_some() == ["ptid:contract"]
     sdk.files_list_folder.assert_called_once_with(
         path="/Contracts",
         recursive=False,
         include_deleted=False,
-        include_property_groups=TemplateFilter.filter_none,
+        include_property_groups=include_property_groups,
     )
     sdk.files_list_folder_continue.assert_called_once_with("next")
+
+
+def test_client_skips_file_property_listing_when_no_templates_are_visible() -> None:
+    sdk = Mock()
+    sdk.file_properties_templates_list_for_user.return_value = Mock(template_ids=[])
+
+    with patch("source_dropbox.dropbox_context.dropbox.Dropbox", return_value=sdk):
+        client = DropboxClient(CONFIG)
+        pages = list(
+            client.iter_entries_with_property_groups(path="/Contracts", recursive=False)
+        )
+
+    assert pages == []
+    sdk.file_properties_templates_list_for_user.assert_called_once_with()
+    sdk.files_list_folder.assert_not_called()
+    sdk.files_list_folder_continue.assert_not_called()
+
+
+def test_template_filter_none_reproduces_installed_sdk_route_type_mismatch() -> None:
+    with pytest.raises(Exception, match="expected type dropbox.file_properties.TemplateFilterBase"):
+        ListFolderArg(
+            path="/Contracts",
+            recursive=False,
+            include_deleted=False,
+            include_property_groups=TemplateFilter.filter_none,
+        )
+
+
+def test_client_rejects_malformed_file_property_template_ids() -> None:
+    sdk = Mock()
+    sdk.file_properties_templates_list_for_user.return_value = Mock(template_ids=[None])
+
+    with patch("source_dropbox.dropbox_context.dropbox.Dropbox", return_value=sdk):
+        client = DropboxClient(CONFIG)
+        with pytest.raises(DropboxFilePropertiesError, match="malformed"):
+            list(client.iter_entries_with_property_groups(path="/Contracts", recursive=False))
