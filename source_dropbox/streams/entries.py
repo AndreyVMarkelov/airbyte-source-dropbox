@@ -5,6 +5,7 @@ from typing import Any
 
 from airbyte_cdk.models import SyncMode
 from airbyte_cdk.sources.streams import CheckpointMixin
+from airbyte_cdk.sources.streams.checkpoint import CheckpointMode
 
 from source_dropbox.client import NamespaceInfo
 from source_dropbox.normalizer import normalize_entry
@@ -24,12 +25,21 @@ class Entries(DropboxStream, CheckpointMixin):
     @property
     def cursor_field(self) -> list[str]:
         # The cursor is connector state only; it is never added to a destination
-        # record or to the public stream schema.
-        return ["cursor"]
+        # record or to the public stream schema. Advertising a synthetic cursor
+        # field breaks destinations that validate configured cursor fields
+        # against the stream JSON schema.
+        return []
 
     @property
     def supports_incremental(self) -> bool:
         return True
+
+    @property
+    def _checkpoint_mode(self) -> CheckpointMode:
+        # CDK 6.x treats an incremental stream with an empty cursor_field as
+        # resumable full refresh by default. entries deliberately has no public
+        # record cursor, but it does have stream-managed incremental state.
+        return CheckpointMode.INCREMENTAL
 
     @property
     def state(self) -> MutableMapping[str, Any]:
