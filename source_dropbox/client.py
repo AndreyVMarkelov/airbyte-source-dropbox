@@ -6,7 +6,7 @@ from time import monotonic, sleep
 from typing import Any
 
 from dropbox.exceptions import ApiError, AuthError, BadInputError, RateLimitError
-from dropbox.file_properties import GetTemplateResult, TemplateFilter
+from dropbox.file_properties import GetTemplateResult, TemplateFilterBase
 from dropbox.files import ListFolderContinueError, ListFolderResult, Metadata
 
 from source_dropbox.dropbox_context import (
@@ -183,6 +183,7 @@ class DropboxClient:
         *,
         path: str,
         recursive: bool,
+        include_property_groups: TemplateFilterBase,
         namespace: NamespaceInfo | None = None,
     ) -> DropboxPage:
         """List live folder entries with all attached Dropbox File Properties."""
@@ -191,7 +192,7 @@ class DropboxClient:
                 path=path,
                 recursive=recursive,
                 include_deleted=False,
-                include_property_groups=TemplateFilter.filter_none,
+                include_property_groups=include_property_groups,
             )
         except (AuthError, BadInputError) as exc:
             self._raise_auth_or_refresh_error(exc)
@@ -352,15 +353,49 @@ class DropboxClient:
         path: str,
         recursive: bool,
     ) -> Iterator[DropboxPage]:
+        template_ids = self.list_property_template_ids()
+        if not template_ids:
+            return
+
+        include_property_groups = TemplateFilterBase.filter_some(template_ids)
         for namespace, client in self._iter_namespace_clients():
             page = self._list_folder_with_property_groups_for_client(
-                client, path=path, recursive=recursive, namespace=namespace
+                client,
+                path=path,
+                recursive=recursive,
+                include_property_groups=include_property_groups,
+                namespace=namespace,
             )
             while True:
                 yield page
                 if not page.has_more:
                     break
                 page = self._list_folder_continue_for_client(client, page.cursor, namespace)
+
+    def list_property_template_ids(self) -> list[str]:
+        try:
+            result = self._client.file_properties_templates_list_for_user()
+        except (AuthError, BadInputError) as exc:
+            self._raise_auth_or_refresh_error(exc)
+        except RateLimitError as exc:
+            raise DropboxRateLimitError(
+                "Dropbox rate limited file-property template synchronization."
+            ) from exc
+        except ApiError as exc:
+            raise DropboxFilePropertiesError(
+                "Dropbox could not list File Properties templates."
+            ) from exc
+
+        template_ids = getattr(result, "template_ids", None)
+        if template_ids is None:
+            return []
+        if not isinstance(template_ids, list) or not all(
+            isinstance(template_id, str) and template_id for template_id in template_ids
+        ):
+            raise DropboxFilePropertiesError(
+                "Dropbox returned malformed File Properties template IDs."
+            )
+        return template_ids
 
     def get_property_template(self, template_id: str) -> GetTemplateResult | None:
         try:
