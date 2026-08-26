@@ -64,7 +64,7 @@ def _catalog(
                 ),
                 sync_mode=sync_mode,
                 destination_sync_mode=DestinationSyncMode.append,
-                cursor_field=["cursor"] if name == "entries" else [],
+                cursor_field=[] if name == "entries" else [],
             )
             for name in names
         ]

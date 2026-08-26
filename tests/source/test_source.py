@@ -68,7 +68,7 @@ def test_entries_checkpoints_only_after_complete_pages() -> None:
     ):
         stream = SourceDropbox().streams(CONFIG)[0]
         stream.state = {"cursor": "saved"}
-        configured_stream = Mock(sync_mode=SyncMode.incremental, cursor_field=["cursor"])
+        configured_stream = Mock(sync_mode=SyncMode.incremental, cursor_field=[])
         configured_stream.stream.json_schema = stream.get_json_schema()
         slice_logger = Mock()
         slice_logger.should_log_slice_message.return_value = False
@@ -109,7 +109,7 @@ def test_entries_checkpoints_an_empty_page() -> None:
 
     with patch("source_dropbox.source.DropboxClient", return_value=client):
         stream = SourceDropbox().streams(CONFIG)[0]
-        configured_stream = Mock(sync_mode=SyncMode.full_refresh, cursor_field=["cursor"])
+        configured_stream = Mock(sync_mode=SyncMode.full_refresh, cursor_field=[])
         configured_stream.stream.json_schema = stream.get_json_schema()
         slice_logger = Mock()
         slice_logger.should_log_slice_message.return_value = False
@@ -146,7 +146,7 @@ def test_entries_does_not_advance_state_when_the_cdk_stops_mid_page() -> None:
     ):
         stream = SourceDropbox().streams(CONFIG)[0]
         stream.state = {"cursor": "saved"}
-        configured_stream = Mock(sync_mode=SyncMode.incremental, cursor_field=["cursor"])
+        configured_stream = Mock(sync_mode=SyncMode.incremental, cursor_field=[])
         configured_stream.stream.json_schema = stream.get_json_schema()
         slice_logger = Mock()
         slice_logger.should_log_slice_message.return_value = False

@@ -92,6 +92,19 @@ def _schema(name: str) -> dict[str, object]:
     return json.loads(path.read_text())
 
 
+def _schema_has_field_path(schema: dict[str, object], field_path: list[str]) -> bool:
+    current = schema
+    for field in field_path:
+        properties = current.get("properties")
+        if not isinstance(properties, dict) or field not in properties:
+            return False
+        next_schema = properties[field]
+        if not isinstance(next_schema, dict):
+            return False
+        current = next_schema
+    return True
+
+
 def test_discover_exposes_snapshot_streams_in_order() -> None:
     with patch("source_dropbox.source.DropboxClient"):
         catalog = SourceDropbox().discover(Mock(), CONFIG)
@@ -107,6 +120,7 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
         "file_contents",
     ]
     assert catalog.streams[0].supported_sync_modes == [SyncMode.full_refresh, SyncMode.incremental]
+    assert catalog.streams[0].default_cursor_field == []
     assert catalog.streams[1].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[2].supported_sync_modes == [SyncMode.full_refresh]
     assert catalog.streams[1].source_defined_primary_key == [["id"]]
@@ -120,6 +134,24 @@ def test_discover_exposes_snapshot_streams_in_order() -> None:
     assert catalog.streams[7].supported_sync_modes == [SyncMode.full_refresh, SyncMode.incremental]
     assert catalog.streams[7].source_defined_primary_key == [["file_id"]]
     assert catalog.streams[7].default_cursor_field == []
+
+
+def test_discovered_cursor_fields_exist_in_stream_schemas() -> None:
+    with patch("source_dropbox.source.DropboxClient"):
+        catalog = SourceDropbox().discover(Mock(), CONFIG)
+
+    streams = {stream.name: stream for stream in catalog.streams}
+    entries = streams["entries"]
+    assert SyncMode.incremental in entries.supported_sync_modes
+    assert entries.default_cursor_field == []
+    assert "cursor" not in entries.json_schema["properties"]
+
+    for stream in catalog.streams:
+        field_path = stream.default_cursor_field
+        if field_path:
+            assert _schema_has_field_path(stream.json_schema, field_path), (
+                f"{stream.name} advertises missing cursor field path {field_path}"
+            )
 
 
 def test_files_filters_metadata_pages_and_preserves_optional_metadata() -> None:
