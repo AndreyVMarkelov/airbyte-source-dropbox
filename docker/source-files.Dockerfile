@@ -8,4 +8,6 @@ RUN pip install --no-cache-dir ./connectors/source-dropbox-files
 
 WORKDIR /airbyte/integration_code/connectors/source-dropbox-files
 
+ENV AIRBYTE_ENTRYPOINT="source-dropbox-files"
+
 ENTRYPOINT ["source-dropbox-files"]
