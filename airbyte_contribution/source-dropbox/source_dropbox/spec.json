@@ -1,5 +1,5 @@
 {
-  "documentationUrl": "https://github.com/AndreyVMarkelov/airbyte-source-dropbox",
+  "documentationUrl": "https://docs.airbyte.com/integrations/sources/dropbox",
   "connectionSpecification": {
     "$schema": "http://json-schema.org/draft-07/schema#",
     "title": "Dropbox Source Spec",
